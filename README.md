@@ -24,23 +24,32 @@
 
 ## 🚀 核心功能
 
-- **多因子量化模型**：基于动量、成长、估值、质量、分析师共识、波动率六大因子
+- **多因子量化模型**：基于动量、成长、估值、质量、波动率五大因子
+- **实时市场数据**：使用akshare获取真实A股市场数据（实时行情、历史价格、财务指标）
 - **行业专项调整**：针对AI产业链不同细分领域进行因子权重调整
 - **智能资产配置**：基于得分自动优化仓位分配，控制风险
 - **数据可视化报告**：生成详细的分析报告和配置建议
-- **灵活数据源**：支持模拟数据测试和真实市场数据
+- **数据探索工具**：提供`explore_akshare_data.py`探索可用数据源和因子
 
 ## 📊 量化因子模型
 
 ### 因子权重分配
-| 因子名称 | 权重 | 主要指标 |
-|---------|------|---------|
-| **动量因子** | 20% | 20日/60日相对强度、价格与均线偏离度 |
-| **成长因子** | 20% | 营收增速、净利润增长率 |
-| **估值因子** | 15% | PE估值、PEG比率 |
-| **质量因子** | 15% | ROE净利率、现金流质量、毛利率 |
-| **分析师共识** | 15% | 买入评级比例、目标价上行空间 |
-| **波动率因子** | 15% | 年化波动率、最大回撤 |
+| 因子名称 | 权重 | 主要指标 | 数据来源 |
+|---------|------|---------|---------|
+| **动量因子** | 25% | 20日/60日收益率、价格与均线偏离度 | 实时行情(5日/60日涨跌幅)、历史价格 |
+| **成长因子** | 25% | 营收增速、净利润增长率 | 实时行情(YTD收益率作为代理) |
+| **估值因子** | 18% | PE TTM、PB、PS、PEG | 实时行情(市盈率-动态、市净率、市销率) |
+| **质量因子** | 18% | ROE、毛利率、现金流质量 | 实时行情(估值+波动率作为代理) |
+| **波动率因子** | 14% | 年化波动率、最大回撤、振幅 | 历史价格、实时行情(振幅) |
+
+### 可用数据源
+系统从akshare获取以下数据：
+- **实时行情数据** (`stock_zh_a_spot_em`): PE、PB、PS、PCF、市值、收益率(5日/60日/YTD)、换手率、量比、振幅
+- **历史价格数据** (`stock_zh_a_hist`): 日线价格、成交量、技术指标(MA、RSI、波动率、最大回撤)
+- **分红数据** (`stock_dividend_cninfo`): 分红送股信息
+- **行业分类** (`stock_board_industry_name_em`): 行业板块数据
+
+**注意**: 财务质量指标(ROE、毛利率等)目前使用估值和波动率作为代理，未来可扩展财务报告数据源。
 
 ### 行业专项调整
 针对AI产业链不同细分领域进行因子权重微调：
@@ -54,6 +63,8 @@
 ```
 AI产业链股票量化选股系统
 ├── ai_stock_ranker.py          # 主入口脚本 (CLI)
+├── explore_akshare_data.py     # 数据源探索工具
+├── explore_akshare_financial.py # 财务数据探索工具
 ├── src/
 │   ├── __init__.py             # 包初始化
 │   ├── config.py               # 配置 (因子权重、行业调整、仓位限制)
@@ -70,10 +81,14 @@ AI产业链股票量化选股系统
 | 模块 | 职责 |
 |------|------|
 | `config.py` | FACTOR_WEIGHTS, INDUSTRY_ADJUSTMENT, POSITION_LIMITS |
-| `data_fetcher.py` | StockDataFetcher - 从akshare获取价格/财务数据 |
-| `factor_calculator.py` | FactorCalculator - 计算5维度因子得分 |
+| `data_fetcher.py` | StockDataFetcher - 从akshare获取实时行情和历史价格数据，提取15+因子 |
+| `factor_calculator.py` | FactorCalculator - 计算5维度因子得分，智能处理缺失数据 |
 | `portfolio_optimizer.py` | PortfolioOptimizer - 资产配置优化 |
 | `stock_ranker.py` | StockRanker - 整合各模块的主协调器 |
+
+### 数据探索工具
+- `explore_akshare_data.py`: 探索akshare可用数据源，识别可用因子
+- `explore_akshare_financial.py`: 探索财务数据接口，发现更多数据源
 
 ## 🛠️ 安装与使用
 
@@ -149,14 +164,14 @@ python ai_stock_ranker.py \
 | `ai_exposure` | AI暴露度 |
 | `composite_score` | 综合得分 (0-100) |
 | `rank` | 综合排名 |
-| `momentum_score` | 动量因子得分 |
-| `growth_score` | 成长因子得分 |
-| `valuation_score` | 估值因子得分 |
-| `quality_score` | 质量因子得分 |
-| `volatility_score` | 波动率因子得分 |
+| `momentum_score` | 动量因子得分 (基于20日/60日收益率、MA偏离度) |
+| `growth_score` | 成长因子得分 (基于YTD收益率代理或财务数据) |
+| `valuation_score` | 估值因子得分 (基于PE/PB/PS，估值越低得分越高) |
+| `quality_score` | 质量因子得分 (基于ROE/毛利率，或估值+波动率代理) |
+| `volatility_score` | 波动率因子得分 (基于波动率、最大回撤、振幅，波动率越低得分越高) |
 | `recommendation` | 推荐评级 (核心配置/卫星配置/观察/不配置) |
 | `target_weight` | 建议权重占比 |
-| `position_value` | 建议投资金额 |
+| `position_value` | 建议投资金额(亿元) |
 
 ## 📋 投资策略建议
 
@@ -181,10 +196,37 @@ python ai_stock_ranker.py \
 
 ```bash
 # 安装依赖
-pip install akshare
+pip install akshare pandas numpy
 ```
 
-**注意：** 如果无法获取某只股票的数据，系统将抛出错误而非使用模拟数据。
+### 可用数据源
+系统从akshare实时获取以下数据：
+
+#### 1. 实时行情数据 (`stock_zh_a_spot_em`)
+- **估值指标**: 市盈率-动态(PE TTM)、市净率(PB)、市销率(PS)、市现率(PCF)
+- **规模指标**: 总市值、流通市值
+- **动量指标**: 5日涨跌幅、60日涨跌幅、年初至今涨跌幅
+- **技术指标**: 换手率、换手率(自由流通股)、量比、振幅
+
+#### 2. 历史价格数据 (`stock_zh_a_hist`)
+- **价格数据**: 开盘、收盘、最高、最低
+- **成交量**: 成交量、成交额
+- **技术指标**: 计算MA20/MA60、RSI(14)、波动率、最大回撤
+
+#### 3. 其他数据源
+- **分红数据**: `stock_dividend_cninfo` - 分红送股信息
+- **行业分类**: `stock_board_industry_name_em` - 行业板块数据
+
+### 数据质量保证
+- **使用实际数据**: 系统优先使用真实市场数据，不使用默认值
+- **缺失数据处理**: 当数据缺失时，使用中位数填充或智能代理
+- **数据验证**: 只过滤极端异常值，保留正常的高PE/PB值(成长股常见)
+
+### 探索可用数据
+运行数据探索工具查看所有可用数据源：
+```bash
+python explore_akshare_data.py
+```
 
 ## 📊 示例输出
 
@@ -230,6 +272,12 @@ AI产业链股票量化选股报告
 - 定期回测因子有效性
 - 根据市场环境调整权重
 - 扩展新的量化因子
+- 探索更多akshare数据源（运行`explore_akshare_data.py`）
+
+### 数据更新
+- 系统每次运行都会获取最新实时数据
+- 历史价格数据默认回溯90天
+- 建议在交易时间后运行以获取完整当日数据
 
 ## ⚠️ 重要声明
 
@@ -250,9 +298,9 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 ## 👨‍💻 关于作者
 
 - **创建者**: 个人开发者
-- **AI助手**: MiniMax M2.1
-- **版本**: 1.0
-- **最后更新**: 2026-01-12
+- **AI助手**: MiniMax M2.1 / Cursor AI
+- **版本**: 2.0 (Refactored with Real Data)
+- **最后更新**: 2026-01-13
 
 ---
 
@@ -265,8 +313,15 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 - 最终完成功能实现
 
 **核心依赖**:
-- [akshare](https://github.com/akfamily/akshare) - 开源财经数据接口
-- [MiniMax Agent](https://minimax.chat/) - AI编程助手
+- [akshare](https://github.com/akfamily/akshare) - 开源财经数据接口，提供实时行情和历史数据
+- [MiniMax Agent](https://minimax.chat/) / Cursor AI - AI编程助手
+
+**主要改进 (v2.0)**:
+- ✅ 使用真实市场数据替代默认值
+- ✅ 从实时行情提取15+因子（PE、PB、PS、收益率、换手率等）
+- ✅ 智能处理缺失数据（中位数填充、代理因子）
+- ✅ 数据探索工具帮助发现可用数据源
+- ✅ 改进的因子计算逻辑，支持None值处理
 
 ## ⚠️ 免责声明
 
