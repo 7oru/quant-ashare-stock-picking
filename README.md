@@ -53,21 +53,27 @@
 
 ```
 AI产业链股票量化选股系统
-├── 📊 数据获取层 (StockDataFetcher)
-│   ├── 价格数据 (Price Data)
-│   ├── 财务数据 (Financial Data)
-│   └── 分析师数据 (Analyst Data)
-├── 🔢 因子计算层 (FactorCalculator)
-│   ├── 六维度因子计算
-│   ├── Z-score标准化
-│   └── 行业调整系数
-├── 📈 组合优化层 (PortfolioOptimizer)
-│   ├── 资产配置优化
-│   └── 风险控制规则
-└── 📋 结果输出层
-    ├── 排名结果 (Ranking Results)
-    └── 配置建议 (Allocation Advice)
+├── ai_stock_ranker.py          # 主入口脚本 (CLI)
+├── src/
+│   ├── __init__.py             # 包初始化
+│   ├── config.py               # 配置 (因子权重、行业调整、仓位限制)
+│   ├── data_fetcher.py         # 数据获取 (价格、财务数据)
+│   ├── factor_calculator.py    # 因子计算 (5维度因子)
+│   ├── portfolio_optimizer.py  # 组合优化 (资产配置)
+│   └── stock_ranker.py         # 主协调器
+├── ai_stock_pool.csv           # 股票池
+├── results/                    # 输出结果目录
+└── requirements.txt            # 依赖
 ```
+
+### 模块说明
+| 模块 | 职责 |
+|------|------|
+| `config.py` | FACTOR_WEIGHTS, INDUSTRY_ADJUSTMENT, POSITION_LIMITS |
+| `data_fetcher.py` | StockDataFetcher - 从akshare获取价格/财务数据 |
+| `factor_calculator.py` | FactorCalculator - 计算5维度因子得分 |
+| `portfolio_optimizer.py` | PortfolioOptimizer - 资产配置优化 |
+| `stock_ranker.py` | StockRanker - 整合各模块的主协调器 |
 
 ## 🛠️ 安装与使用
 
@@ -95,58 +101,59 @@ pip install pandas numpy akshare  # akshare替代tushare，提供更全面的A�
 
 #### 1. 基础运行（推荐）
 ```bash
-# 使用模拟数据快速测试
+# 使用默认配置
 python ai_stock_ranker.py
-
-# 或使用批处理脚本 (Windows)
-run_ranker.bat
 ```
 
-#### 2. 高级参数运行
-```bash
-# 完整参数示例
-python ai_stock_ranker.py \
-    --csv ai_stock_pool.csv \
-    --output ranking_result.csv \
-    --capital 100.0 \
-    --use-real \
-    --report
-```
-
-#### 3. 参数说明
+#### 2. 参数说明
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
 | `--csv` | 股票池CSV文件路径 | `ai_stock_pool.csv` |
-| `--output` | 输出文件路径 | `ranking_result.csv` |
+| `--output` | 输出文件路径 | `results/ranking_result_yyyymmdd_HHMMSS.csv` |
 | `--capital` | 总投资资金（亿元） | `100.0` |
-| `--use-mock` | 使用模拟数据（默认） | `True` |
-| `--use-real` | 使用真实市场数据 | `False` |
 | `--report` | 生成详细分析报告 | `False` |
+
+#### 3. 使用示例
+```bash
+# 使用默认配置（输入: ai_stock_pool.csv, 输出: results/ranking_result_*.csv）
+python ai_stock_ranker.py
+
+# 自定义股票池
+python ai_stock_ranker.py --csv my_stock_pool.csv
+
+# 自定义输出路径
+python ai_stock_ranker.py --output /path/to/result.csv
+
+# 生成详细报告
+python ai_stock_ranker.py --report
+
+# 完整参数示例
+python ai_stock_ranker.py \
+    --csv ai_stock_pool.csv \
+    --output results/my_result.csv \
+    --capital 100.0 \
+    --report
+```
 
 ## 📈 输出结果说明
 
-### 1. 排名结果文件 (`ranking_result_ranking.csv`)
-包含所有股票的详细因子得分和综合排名：
+### 输出文件
+结果保存至 `results/ranking_result_yyyymmdd_HHMMSS.csv`，包含以下字段：
 
 | 字段名 | 说明 |
 |--------|------|
 | `stock_code` | 股票代码 |
 | `stock_name` | 股票名称 |
 | `sector` | 行业分类 |
+| `sub_sector` | 子行业分类 |
+| `ai_exposure` | AI暴露度 |
 | `composite_score` | 综合得分 (0-100) |
 | `rank` | 综合排名 |
 | `momentum_score` | 动量因子得分 |
 | `growth_score` | 成长因子得分 |
 | `valuation_score` | 估值因子得分 |
 | `quality_score` | 质量因子得分 |
-| `analyst_score` | 分析师共识得分 |
 | `volatility_score` | 波动率因子得分 |
-
-### 2. 配置结果文件 (`ranking_result.csv`)
-包含资产配置建议和权重分配：
-
-| 字段名 | 说明 |
-|--------|------|
 | `recommendation` | 推荐评级 (核心配置/卫星配置/观察/不配置) |
 | `target_weight` | 建议权重占比 |
 | `position_value` | 建议投资金额 |
@@ -169,22 +176,15 @@ python ai_stock_ranker.py \
 
 ## 🔧 数据源配置
 
-### 使用模拟数据（默认）
-无需配置，系统自动生成测试数据
+### 数据来源
+系统使用 [akshare](https://github.com/akfamily/akshare) 获取真实市场数据：
 
-### 使用真实市场数据
 ```bash
-# 1. 安装akshare
+# 安装依赖
 pip install akshare
-
-# 2. 运行时指定使用真实数据
-python ai_stock_ranker.py --use-real
 ```
 
-**支持的数据源：**
-- **akshare**：开源免费的财经数据接口
-- **A股市场**：沪深交易所全部股票
-- **实时更新**：价格、财务、分析师数据
+**注意：** 如果无法获取某只股票的数据，系统将抛出错误而非使用模拟数据。
 
 ## 📊 示例输出
 
