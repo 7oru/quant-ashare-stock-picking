@@ -42,6 +42,10 @@ class FactorCalculator:
         # 优先使用实时行情的收益率数据，否则使用历史数据计算
         momentum_20d = []
         momentum_60d = []
+        macd_signals = []
+        rsi_values = []
+        stoch_values = []
+        
         for s in stocks:
             # 优先使用financial_data中的实时收益率
             ret_60d = financial_data[s].get('returns_60d') if s in financial_data else None
@@ -58,15 +62,30 @@ class FactorCalculator:
                 # 使用历史数据计算
                 momentum_20d.append(price_data[s].get('returns_20d', 0))
                 momentum_60d.append(price_data[s].get('returns_60d', 0))
+            
+            # 提取技术指标
+            macd_hist = price_data[s].get('macd_histogram', 0)
+            macd_signals.append(macd_hist)
+            rsi_values.append(price_data[s].get('rsi', 50))
+            stoch_k = price_data[s].get('stoch_k', 50)
+            stoch_d = price_data[s].get('stoch_d', 50)
+            stoch_values.append((stoch_k + stoch_d) / 2)
         
         factors['momentum_20d'] = momentum_20d
         factors['momentum_60d'] = momentum_60d
         factors['ma_distance'] = [(price_data[s]['current_price'] / price_data[s]['ma60'] - 1) * 100 
                                    for s in stocks]
+        factors['macd_signal'] = macd_signals
+        factors['rsi'] = rsi_values
+        factors['stoch'] = stoch_values
+        
+        # 增强动量得分：结合收益率、MACD、RSI、Stochastic
         factors['momentum_score'] = (
-            0.4 * self._normalize(factors['momentum_20d']) +
-            0.4 * self._normalize(factors['momentum_60d']) +
-            0.2 * self._normalize(factors['ma_distance'])
+            0.3 * self._normalize(factors['momentum_20d']) +
+            0.3 * self._normalize(factors['momentum_60d']) +
+            0.15 * self._normalize(factors['ma_distance']) +
+            0.15 * self._normalize(factors['macd_signal']) +
+            0.1 * self._normalize(factors['rsi'])
         )
         
         # 2. 成长因子得分
@@ -160,21 +179,38 @@ class FactorCalculator:
         # 4. 波动率因子得分（波动率越低得分越高）- 先计算，因为质量因子可能需要用到
         factors['volatility'] = [price_data[s].get('volatility', 0.3) for s in stocks]
         factors['max_dd'] = [price_data[s].get('max_drawdown', 20) for s in stocks]
+        factors['atr_percent'] = [price_data[s].get('atr_percent', 0) for s in stocks]
+        factors['bb_width'] = [price_data[s].get('bb_width', 0) for s in stocks]
         
         # 如果有振幅数据，也加入波动率计算
         amplitude_values = [financial_data[s].get('amplitude') if financial_data[s].get('amplitude') is not None else 0 for s in stocks]
+        
+        # 增强波动率得分：结合波动率、最大回撤、ATR、布林带宽度、振幅
+        volatility_components = []
+        weights = []
+        
+        volatility_components.append(1 - self._normalize(factors['volatility']))
+        weights.append(0.25)
+        
+        volatility_components.append(1 - self._normalize(factors['max_dd']))
+        weights.append(0.25)
+        
+        if any(x > 0 for x in factors['atr_percent']):
+            volatility_components.append(1 - self._normalize(factors['atr_percent']))
+            weights.append(0.15)
+        
+        if any(x > 0 for x in factors['bb_width']):
+            volatility_components.append(1 - self._normalize(factors['bb_width']))
+            weights.append(0.15)
+        
         if any(x > 0 for x in amplitude_values):
             factors['amplitude'] = amplitude_values
-            factors['volatility_score'] = (
-                0.3 * (1 - self._normalize(factors['volatility'])) +
-                0.3 * (1 - self._normalize(factors['max_dd'])) +
-                0.4 * (1 - self._normalize(factors['amplitude']))
-            )
+            volatility_components.append(1 - self._normalize(factors['amplitude']))
+            weights.append(0.2)
         else:
-            factors['volatility_score'] = (
-                0.5 * (1 - self._normalize(factors['volatility'])) +
-                0.5 * (1 - self._normalize(factors['max_dd']))
-            )
+            weights = [w * (1.0 / sum(weights)) for w in weights]  # 归一化权重
+        
+        factors['volatility_score'] = sum(w * comp for w, comp in zip(weights, volatility_components))
         
         # 5. 质量因子得分
         # 如果财务质量数据不可用，使用技术指标作为代理
