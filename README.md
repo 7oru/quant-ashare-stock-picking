@@ -24,10 +24,11 @@
 
 ## 🚀 核心功能
 
-- **多因子量化模型**：基于动量、成长、估值、质量、波动率五大因子
+- **多因子量化模型**：基于动量、质量、成长、估值、波动率、流动性六大因子
 - **实时市场数据**：使用akshare获取真实A股市场数据（实时行情、历史价格、财务指标）
 - **行业专项调整**：针对AI产业链不同细分领域进行因子权重调整
 - **智能资产配置**：基于得分自动优化仓位分配，控制风险
+- **回测Pipeline**：按周/月/季度滚动调仓，输出净值、换手、回撤和基准对比
 - **数据可视化报告**：生成详细的分析报告和配置建议
 - **数据探索工具**：提供`explore_akshare_data.py`探索可用数据源和因子
 
@@ -36,20 +37,21 @@
 ### 因子权重分配
 | 因子名称 | 权重 | 主要指标 | 数据来源 |
 |---------|------|---------|---------|
-| **动量因子** | 25% | 20日/60日收益率、价格与均线偏离度 | 实时行情(5日/60日涨跌幅)、历史价格 |
-| **成长因子** | 25% | 营收增速、净利润增长率 | 实时行情(YTD收益率作为代理) |
-| **估值因子** | 18% | PE TTM、PB、PS、PEG | 实时行情(市盈率-动态、市净率、市销率) |
-| **质量因子** | 18% | ROE、毛利率、现金流质量 | 实时行情(估值+波动率作为代理) |
-| **波动率因子** | 14% | 年化波动率、最大回撤、振幅 | 历史价格、实时行情(振幅) |
+| **动量因子** | 30% | 20/60/120日收益率、动量加速度、MACD、RSI健康度、趋势强度 | 实时行情、历史价格 |
+| **质量因子** | 20% | ROE、毛利率、净利率、现金流质量；缺失时用估值/风险/流动性代理 | 财务数据、代理因子 |
+| **成长因子** | 15% | 营收增速、净利润增长率、YTD收益率、风险调整动量 | 财务数据、历史价格 |
+| **估值因子** | 15% | PE TTM、PB、PS、PCF、PEG | 实时行情 |
+| **波动率因子** | 10% | 年化波动、下行波动、最大回撤、ATR、布林带宽度、振幅 | 历史价格、实时行情 |
+| **流动性因子** | 10% | 换手率、量比、成交额、流通市值、量能确认 | 实时行情、历史价格 |
 
 ### 可用数据源
 系统从akshare获取以下数据：
 - **实时行情数据** (`stock_zh_a_spot_em`): PE、PB、PS、PCF、市值、收益率(5日/60日/YTD)、换手率、量比、振幅
-- **历史价格数据** (`stock_zh_a_hist`): 日线价格、成交量、技术指标(MA、RSI、波动率、最大回撤)
+- **历史价格数据** (`stock_zh_a_hist`): 日线价格、成交量、技术指标(MA、RSI、MACD、ATR、波动率、最大回撤)
 - **分红数据** (`stock_dividend_cninfo`): 分红送股信息
 - **行业分类** (`stock_board_industry_name_em`): 行业板块数据
 
-**注意**: 财务质量指标(ROE、毛利率等)目前使用估值和波动率作为代理，未来可扩展财务报告数据源。
+**注意**: 历史回测默认只使用调仓日前可见的K线和成交数据；若缺少点时财务数据，质量/成长会自动降级为代理因子。
 
 ### 行业专项调整
 针对AI产业链不同细分领域进行因子权重微调：
@@ -63,13 +65,16 @@
 ```
 AI产业链股票量化选股系统
 ├── ai_stock_ranker.py          # 主入口脚本 (CLI)
+├── backtest_pipeline.py        # 回测入口脚本 (CLI)
 ├── explore_akshare_data.py     # 数据源探索工具
 ├── explore_akshare_financial.py # 财务数据探索工具
 ├── src/
 │   ├── __init__.py             # 包初始化
 │   ├── config.py               # 配置 (因子权重、行业调整、仓位限制)
 │   ├── data_fetcher.py         # 数据获取 (价格、财务数据)
-│   ├── factor_calculator.py    # 因子计算 (5维度因子)
+│   ├── market_features.py      # 历史行情特征工程
+│   ├── factor_calculator.py    # 因子计算 (6维度因子)
+│   ├── backtester.py           # 回测Pipeline
 │   ├── portfolio_optimizer.py  # 组合优化 (资产配置)
 │   └── stock_ranker.py         # 主协调器
 ├── ai_stock_pool.csv           # 股票池
@@ -81,8 +86,10 @@ AI产业链股票量化选股系统
 | 模块 | 职责 |
 |------|------|
 | `config.py` | FACTOR_WEIGHTS, INDUSTRY_ADJUSTMENT, POSITION_LIMITS |
-| `data_fetcher.py` | StockDataFetcher - 从akshare获取实时行情和历史价格数据，提取15+因子 |
-| `factor_calculator.py` | FactorCalculator - 计算5维度因子得分，智能处理缺失数据 |
+| `data_fetcher.py` | StockDataFetcher - 从akshare获取实时行情和历史价格数据 |
+| `market_features.py` | calculate_price_features - 计算点时技术/风险/流动性特征 |
+| `factor_calculator.py` | FactorCalculator - 计算6维度因子得分，稳健处理缺失数据 |
+| `backtester.py` | BacktestPipeline - 滚动调仓回测、净值和绩效统计 |
 | `portfolio_optimizer.py` | PortfolioOptimizer - 资产配置优化 |
 | `stock_ranker.py` | StockRanker - 整合各模块的主协调器 |
 
@@ -124,13 +131,14 @@ python ai_stock_ranker.py
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
 | `--csv` | 股票池CSV文件路径 | `ai_stock_pool.csv` |
-| `--output` | 输出文件路径 | `results/ranking_result_yyyymmdd_HHMMSS.csv` |
+| `--output` | 输出文件路径 | `results/<timestamp>/ranking_result.csv` |
 | `--capital` | 总投资资金（亿元） | `100.0` |
+| `--lookback-days` | 历史价格回溯天数 | `240` |
 | `--report` | 生成详细分析报告 | `False` |
 
 #### 3. 使用示例
 ```bash
-# 使用默认配置（输入: ai_stock_pool.csv, 输出: results/ranking_result_*.csv）
+# 使用默认配置（输入: ai_stock_pool.csv, 输出: results/<timestamp>/）
 python ai_stock_ranker.py
 
 # 自定义股票池
@@ -142,18 +150,39 @@ python ai_stock_ranker.py --output /path/to/result.csv
 # 生成详细报告
 python ai_stock_ranker.py --report
 
-# 完整参数示例
+# 完整参数示例；指定 --output 时不再自动创建 timestamp 子目录
 python ai_stock_ranker.py \
     --csv ai_stock_pool.csv \
     --output results/my_result.csv \
     --capital 100.0 \
+    --lookback-days 240 \
     --report
 ```
+
+#### 4. 回测Pipeline
+```bash
+# 月度调仓回测，输出到 results/<timestamp>/
+python backtest_pipeline.py \
+    --csv ai_stock_pool.csv \
+    --start 2024-01-01 \
+    --end 2025-12-31 \
+    --rebalance monthly \
+    --lookback-days 180 \
+    --top-n 10 \
+    --fee-bps 10
+```
+
+回测会在每个调仓日收盘后计算信号，从下一个交易日开始持有，避免未来函数。默认基准为股票池等权组合。
 
 ## 📈 输出结果说明
 
 ### 输出文件
-结果保存至 `results/ranking_result_yyyymmdd_HHMMSS.csv`，包含以下字段：
+默认每次运行都会创建 `results/<timestamp>/`，其中：
+- `ranking_result.csv`: 排名、因子得分、推荐评级和目标仓位
+- `ranking_scores.csv`: 不含仓位优化的纯排名得分
+- `analysis_report.txt`: 使用 `--report` 时生成的文本报告
+
+`ranking_result.csv` 包含以下字段：
 
 | 字段名 | 说明 |
 |--------|------|
@@ -169,9 +198,20 @@ python ai_stock_ranker.py \
 | `valuation_score` | 估值因子得分 (基于PE/PB/PS，估值越低得分越高) |
 | `quality_score` | 质量因子得分 (基于ROE/毛利率，或估值+波动率代理) |
 | `volatility_score` | 波动率因子得分 (基于波动率、最大回撤、振幅，波动率越低得分越高) |
+| `liquidity_score` | 流动性因子得分 (基于换手率、量比、市值/成交额) |
+| `risk_adjusted_momentum` | 风险调整动量原始值 |
+| `growth_data_coverage` | 成长财务数据覆盖率 |
+| `quality_data_coverage` | 质量财务数据覆盖率 |
 | `recommendation` | 推荐评级 (核心配置/卫星配置/观察/不配置) |
 | `target_weight` | 建议权重占比 |
 | `position_value` | 建议投资金额(亿元) |
+
+### 回测输出
+`backtest_pipeline.py` 会保存：
+- `backtest_config.csv`: 回测参数
+- `backtest_summary.csv`: 总收益、年化收益、年化波动、Sharpe、最大回撤、胜率、换手
+- `backtest_equity.csv`: 每日策略净值、基准净值、现金权重、回撤
+- `backtest_rebalances.csv`: 每次调仓的入选股票、权重、排名和因子得分
 
 ## 📋 投资策略建议
 
@@ -211,7 +251,7 @@ pip install akshare pandas numpy
 #### 2. 历史价格数据 (`stock_zh_a_hist`)
 - **价格数据**: 开盘、收盘、最高、最低
 - **成交量**: 成交量、成交额
-- **技术指标**: 计算MA20/MA60、RSI(14)、波动率、最大回撤
+- **技术指标**: 计算MA20/MA60/MA120、RSI(14)、MACD、Stochastic、ATR、布林带、波动率、最大回撤
 
 #### 3. 其他数据源
 - **分红数据**: `stock_dividend_cninfo` - 分红送股信息
@@ -219,8 +259,9 @@ pip install akshare pandas numpy
 
 ### 数据质量保证
 - **使用实际数据**: 系统优先使用真实市场数据，不使用默认值
-- **缺失数据处理**: 当数据缺失时，使用中位数填充或智能代理
+- **缺失数据处理**: 当数据缺失时，使用中性分数或点时代理因子
 - **数据验证**: 只过滤极端异常值，保留正常的高PE/PB值(成长股常见)
+- **临时缓存**: AkShare 日线和实时行情默认缓存到 `/tmp/quant_ashare_stock_picking_cache`，24小时内重复运行优先读缓存
 
 ### 探索可用数据
 运行数据探索工具查看所有可用数据源：
@@ -269,14 +310,14 @@ AI产业链股票量化选股报告
 - **每季度**：评估基本面变化，调整因子权重
 
 ### 模型优化
-- 定期回测因子有效性
+- 使用 `backtest_pipeline.py` 定期回测因子有效性
 - 根据市场环境调整权重
 - 扩展新的量化因子
 - 探索更多akshare数据源（运行`explore_akshare_data.py`）
 
 ### 数据更新
 - 系统每次运行都会获取最新实时数据
-- 历史价格数据默认回溯90天
+- 历史价格数据默认回溯240天
 - 建议在交易时间后运行以获取完整当日数据
 
 ## ⚠️ 重要声明
@@ -299,8 +340,8 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 
 - **创建者**: 个人开发者
 - **AI助手**: MiniMax M2.1 / Cursor AI
-- **版本**: 2.0 (Refactored with Real Data)
-- **最后更新**: 2026-01-13
+- **版本**: 2.1 (Advanced Factors + Backtest Pipeline)
+- **最后更新**: 2026-05-07
 
 ---
 
@@ -316,10 +357,13 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 - [akshare](https://github.com/akfamily/akshare) - 开源财经数据接口，提供实时行情和历史数据
 - [MiniMax Agent](https://minimax.chat/) / Cursor AI - AI编程助手
 
-**主要改进 (v2.0)**:
+**主要改进 (v2.1)**:
 - ✅ 使用真实市场数据替代默认值
 - ✅ 从实时行情提取15+因子（PE、PB、PS、收益率、换手率等）
-- ✅ 智能处理缺失数据（中位数填充、代理因子）
+- ✅ 使用稳健横截面百分位打分，修复低值高分因子的方向问题
+- ✅ 新增流动性因子和风险调整动量
+- ✅ 新增滚动调仓回测Pipeline
+- ✅ 智能处理缺失数据（中性分数、代理因子）
 - ✅ 数据探索工具帮助发现可用数据源
 - ✅ 改进的因子计算逻辑，支持None值处理
 

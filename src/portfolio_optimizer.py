@@ -6,7 +6,6 @@ Portfolio Optimization Module
 """
 
 import pandas as pd
-from typing import Dict
 
 from .config import POSITION_LIMITS
 
@@ -46,29 +45,33 @@ class PortfolioOptimizer:
         mid_stocks = allocation.iloc[10:25].copy()  # 第二梯队
         other_stocks = allocation.iloc[25:40].copy()  # 第三梯队
         
-        # 第一梯队配置（60%）
-        top_weight = 0.60
-        for idx in top_stocks.index:
-            # 根据排名分配权重
-            rank = list(top_stocks.index).index(idx)
-            base_weight = top_weight / len(top_stocks)
-            
-            # 排名越高权重越大
-            weight = base_weight * (1 + (10 - rank) * 0.05)
-            allocation.loc[idx, 'target_weight'] = min(weight, self.position_limits['max_single_stock'])
-        
-        # 第二梯队配置（30%）
-        mid_weight = 0.30
-        for idx in mid_stocks.index:
-            base_weight = mid_weight / len(mid_stocks)
-            allocation.loc[idx, 'target_weight'] = min(base_weight * 0.8, self.position_limits['max_single_stock'] * 0.5)
-        
-        # 第三梯队观察（10%）
-        other_weight = 0.10
-        for idx in other_stocks.index:
-            if allocation.loc[idx, 'composite_score'] >= 50:
-                base_weight = other_weight / len(other_stocks[other_stocks['composite_score'] >= 50])
-                allocation.loc[idx, 'target_weight'] = min(base_weight, self.position_limits['min_stock_weight'])
+        # 第一梯队配置（60%），排名越高权重越大，但梯队合计严格归一。
+        self._assign_tier_weights(
+            allocation,
+            top_stocks.index,
+            total_weight=0.60,
+            rank_tilt=True,
+            max_weight=self.position_limits['max_single_stock'],
+        )
+
+        # 第二梯队配置（30%），等权卫星配置。
+        self._assign_tier_weights(
+            allocation,
+            mid_stocks.index,
+            total_weight=0.30,
+            rank_tilt=False,
+            max_weight=self.position_limits['max_single_stock'] * 0.5,
+        )
+
+        # 第三梯队观察（10%），只配置分数仍高于中性线的股票。
+        eligible_other = other_stocks[other_stocks['composite_score'] >= 50].index
+        self._assign_tier_weights(
+            allocation,
+            eligible_other,
+            total_weight=0.10,
+            rank_tilt=False,
+            max_weight=self.position_limits['max_single_stock'] * 0.35,
+        )
         
         # 行业集中度检查和调整
         allocation = self._check_sector_limits(allocation, stock_info)
@@ -84,6 +87,30 @@ class PortfolioOptimizer:
         allocation.loc[allocation.index[40:], 'recommendation'] = '不配置'
         
         return allocation
+
+    def _assign_tier_weights(self,
+                             allocation: pd.DataFrame,
+                             indexes: pd.Index,
+                             total_weight: float,
+                             rank_tilt: bool,
+                             max_weight: float) -> None:
+        """
+        给一个梯队分配权重，并确保梯队初始权重合计不超过目标值。
+        """
+        if len(indexes) == 0 or total_weight <= 0:
+            return
+
+        if rank_tilt:
+            raw_weights = pd.Series(
+                [1 + (len(indexes) - rank - 1) * 0.05 for rank in range(len(indexes))],
+                index=indexes,
+                dtype='float64',
+            )
+        else:
+            raw_weights = pd.Series(1.0, index=indexes, dtype='float64')
+
+        weights = raw_weights / raw_weights.sum() * total_weight
+        allocation.loc[indexes, 'target_weight'] = weights.clip(upper=max_weight)
     
     def _check_sector_limits(self, 
                             allocation: pd.DataFrame,
@@ -108,9 +135,15 @@ class PortfolioOptimizer:
             if sector_weight > self.position_limits['max_sector']:
                 # 需要调整
                 excess = sector_weight - self.position_limits['max_sector']
-                excess_per_stock = excess / len(sector_stocks[sector_stocks['target_weight'] > self.position_limits['min_stock_weight']])
-                
-                for idx in sector_stocks.index:
+                adjustable = sector_stocks[
+                    sector_stocks['target_weight'] > self.position_limits['min_stock_weight']
+                ]
+                if adjustable.empty:
+                    continue
+
+                excess_per_stock = excess / len(adjustable)
+
+                for idx in adjustable.index:
                     if allocation.loc[idx, 'target_weight'] > self.position_limits['min_stock_weight']:
                         allocation.loc[idx, 'target_weight'] = max(
                             allocation.loc[idx, 'target_weight'] - excess_per_stock,

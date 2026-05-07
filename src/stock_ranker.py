@@ -7,10 +7,10 @@ Stock Ranking Module
 
 import pandas as pd
 import logging
-import os
 import sys
 from typing import Tuple
 from datetime import datetime
+from pathlib import Path
 
 # Use print for progress updates
 def log(msg):
@@ -20,6 +20,7 @@ def log(msg):
 from .data_fetcher import StockDataFetcher
 from .factor_calculator import FactorCalculator
 from .portfolio_optimizer import PortfolioOptimizer
+from .results_manager import create_timestamped_result_dir
 
 
 class StockRanker:
@@ -32,29 +33,38 @@ class StockRanker:
         self.data_fetcher = StockDataFetcher()
         self.factor_calculator = FactorCalculator()
         self.portfolio_optimizer = PortfolioOptimizer()
+        self.last_output_dir = None
+        self.last_output_path = None
         
     def rank_stocks(self,
                    csv_path: str,
                    total_capital: float = 100.0,
-                   output_path: str = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
+                   output_path: str = None,
+                   lookback_days: int = 240) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         对股票池进行排序和配置
         
         Args:
             csv_path: 股票池CSV文件路径
             total_capital: 总资金
-            output_path: 输出文件路径 (默认: results/ranking_result_yyyymmdd_hhmmss.csv)
+            output_path: 输出文件路径 (默认: results/<timestamp>/ranking_result.csv)
+            lookback_days: 历史价格回溯天数
             
         Returns:
             (排名结果, 配置结果)
         """
         log(f"开始股票排序分析: {csv_path}")
         
-        # 生成带时间戳的默认输出路径
+        # 生成带时间戳的默认输出目录
         if output_path is None:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            os.makedirs('results', exist_ok=True)
-            output_path = f"results/ranking_result_{timestamp}.csv"
+            output_dir = create_timestamped_result_dir("results")
+            output_path = output_dir / "ranking_result.csv"
+        else:
+            output_path = Path(output_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_dir = output_path.parent
+        self.last_output_dir = output_dir
+        self.last_output_path = output_path
         
         # 1. 加载股票池
         stock_info = pd.read_csv(csv_path, index_col='stock_code')
@@ -63,7 +73,7 @@ class StockRanker:
         
         # 2. 获取数据
         log("获取股票数据...")
-        price_data = self.data_fetcher.get_price_data(stock_codes)
+        price_data = self.data_fetcher.get_price_data(stock_codes, lookback_days=lookback_days)
         financial_data = self.data_fetcher.get_financial_data(stock_codes)
         
         # 3. 计算因子得分
@@ -82,7 +92,7 @@ class StockRanker:
         composite_score = self.factor_calculator.calculate_composite_score(factors)
         
         # 6. 生成排名结果
-        ranking = pd.DataFrame({
+        ranking_data = {
             'stock_name': stock_info['stock_name'],
             'sector': stock_info['sector'],
             'sub_sector': stock_info['sub_sector'],
@@ -92,8 +102,20 @@ class StockRanker:
             'growth_score': factors['growth_score'],
             'valuation_score': factors['valuation_score'],
             'quality_score': factors['quality_score'],
-            'volatility_score': factors['volatility_score']
-        })
+            'volatility_score': factors['volatility_score'],
+        }
+        optional_columns = [
+            'liquidity_score',
+            'risk_adjusted_momentum',
+            'return_acceleration',
+            'growth_data_coverage',
+            'quality_data_coverage',
+        ]
+        for column in optional_columns:
+            if column in factors.columns:
+                ranking_data[column] = factors[column]
+
+        ranking = pd.DataFrame(ranking_data)
         
         ranking = ranking.sort_values('composite_score', ascending=False)
         ranking['rank'] = range(1, len(ranking) + 1)
@@ -107,6 +129,9 @@ class StockRanker:
         # 8. 输出结果
         log(f"保存结果到: {output_path}")
         allocation.to_csv(output_path)
+        ranking_scores_path = output_dir / "ranking_scores.csv"
+        ranking.to_csv(ranking_scores_path)
+        log(f"保存排名得分到: {ranking_scores_path}")
         
         # 汇总信息
         top_stock = ranking.iloc[0]
@@ -150,7 +175,8 @@ class StockRanker:
             report.append(f"  {row['rank']:2d}. {row['stock_name']:10s} ({idx}) "
                          f"- 综合得分: {row['composite_score']:.1f} "
                          f"- 动量: {row['momentum_score']:.1f} "
-                         f"- 成长: {row['growth_score']:.1f}")
+                         f"- 成长: {row['growth_score']:.1f} "
+                         f"- 流动性: {row.get('liquidity_score', 50):.1f}")
         report.append("")
         
         # 3. 配置建议

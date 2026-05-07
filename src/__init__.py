@@ -8,12 +8,14 @@ from .data_fetcher import StockDataFetcher
 from .factor_calculator import FactorCalculator
 from .portfolio_optimizer import PortfolioOptimizer
 from .stock_ranker import StockRanker
+from .backtester import BacktestPipeline
 
 __all__ = [
     'StockDataFetcher',
     'FactorCalculator',
     'PortfolioOptimizer',
     'StockRanker',
+    'BacktestPipeline',
     'FACTOR_WEIGHTS',
     'INDUSTRY_ADJUSTMENT',
     'POSITION_LIMITS',

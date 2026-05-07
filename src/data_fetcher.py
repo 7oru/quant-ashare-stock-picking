@@ -5,11 +5,13 @@ Data Fetching Module
 从akshare获取真实股票数据
 """
 
-import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List
 import sys
+
+from .data_cache import TmpDataCache
+from .market_features import calculate_price_features
 
 # Use print for progress updates
 def log(msg):
@@ -29,9 +31,10 @@ class StockDataFetcher:
         使用akshare获取真实市场数据
         """
         self.cache = {}
+        self.data_cache = TmpDataCache()
         
     def get_price_data(self, stock_codes: List[str],
-                       lookback_days: int = 90) -> Dict[str, Dict]:
+                       lookback_days: int = 240) -> Dict[str, Dict]:
         """
         获取股票价格数据
 
@@ -61,7 +64,7 @@ class StockDataFetcher:
             import akshare as ak
             
             log(f"获取实时行情数据...")
-            spot_df = ak.stock_zh_a_spot_em()
+            spot_df = self._get_spot_dataframe(ak)
             spot_df = spot_df.set_index('代码')
             
             spot_data = {}
@@ -106,13 +109,14 @@ class StockDataFetcher:
                 ts_code = code.replace('.SZ', '').replace('.SH', '')
                 
                 try:
-                    # 获取日线数据
-                    df = ak.stock_zh_a_hist(
+                    start_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y%m%d')
+                    end_date = datetime.now().strftime('%Y%m%d')
+                    df = self._get_hist_dataframe(
+                        ak,
                         symbol=ts_code,
-                        period="daily",
-                        start_date=(datetime.now() - timedelta(days=lookback_days)).strftime('%Y%m%d'),
-                        end_date=datetime.now().strftime('%Y%m%d'),
-                        adjust="qfq"
+                        start_date=start_date,
+                        end_date=end_date,
+                        adjust="qfq",
                     )
                     
                     if df is None or len(df) == 0:
@@ -120,43 +124,10 @@ class StockDataFetcher:
                         failed_stocks.append(code)
                         continue
                         
-                    df = df.sort_values('日期')
-                    prices = df['收盘'].values
-                    
-                    # 计算技术指标
-                    ma20 = pd.Series(prices[-20:]).mean() if len(prices) >= 20 else prices[-1]
-                    ma60 = pd.Series(prices[-60:]).mean() if len(prices) >= 60 else ma20
-                    
-                    # 计算RSI (14日)
-                    delta = np.diff(prices)
-                    gain = np.where(delta > 0, delta, 0)
-                    loss = np.where(delta < 0, -delta, 0)
-                    avg_gain = np.mean(gain[-14:]) if len(gain) >= 14 else np.mean(gain)
-                    avg_loss = np.mean(loss[-14:]) if len(loss) >= 14 else np.mean(loss)
-                    rsi = 100 * (avg_gain / (avg_gain + avg_loss)) if (avg_gain + avg_loss) > 0 else 50
-                    
-                    # 计算最大回撤
-                    peak = np.maximum.accumulate(prices)
-                    drawdown = (prices - peak) / peak
-                    max_drawdown = abs(np.min(drawdown)) * 100
-                    
-                    # 计算波动率
-                    volatility = np.std(prices[-90:]) / np.mean(prices[-90:]) * np.sqrt(252) if len(prices) >= 90 else 0.3
-                    
-                    price_data[code] = {
-                        'current_price': prices[-1],
-                        'prices_90d': prices,
-                        'ma20': ma20,
-                        'ma60': ma60,
-                        'rsi': min(rsi, 100),
-                        'volatility': volatility,
-                        'max_drawdown': max_drawdown,
-                        'returns_20d': (prices[-1] - prices[-20]) / prices[-20] * 100 if len(prices) >= 20 else 0,
-                        'returns_60d': (prices[-1] - prices[-60]) / prices[-60] * 100 if len(prices) >= 60 else 0,
-                        'turnover_rate': df['换手率'].iloc[-20:].mean() if '换手率' in df.columns else 3.0,
-                    }
-                    
-                    log(f"  [{i}/{total}] 完成: {code} (价格: {prices[-1]:.2f})")
+                    features = calculate_price_features(df)
+                    price_data[code] = features
+
+                    log(f"  [{i}/{total}] 完成: {code} (价格: {features['current_price']:.2f})")
                         
                 except Exception as e:
                     log(f"  [{i}/{total}] 失败: {code} - {str(e)}")
@@ -198,7 +169,7 @@ class StockDataFetcher:
             import akshare as ak
 
             log(f"获取实时行情数据...")
-            spot_df = ak.stock_zh_a_spot_em()
+            spot_df = self._get_spot_dataframe(ak)
             spot_df = spot_df.set_index('代码')
             log(f"实时行情数据获取完成，共 {len(spot_df)} 只股票")
 
@@ -404,3 +375,49 @@ class StockDataFetcher:
         except ValueError as e:
             log(f"错误: {str(e)}")
             raise RuntimeError(str(e))
+
+    def _get_spot_dataframe(self, ak) -> pd.DataFrame:
+        key = {"api": "stock_zh_a_spot_em"}
+        spot_df, cache_hit, cache_path = self.data_cache.get_or_fetch_dataframe(
+            "spot",
+            key,
+            ak.stock_zh_a_spot_em,
+        )
+        if cache_hit:
+            log(f"使用缓存实时行情数据: {cache_path}")
+        return spot_df.copy()
+
+    def _get_hist_dataframe(
+        self,
+        ak,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        adjust: str,
+    ) -> pd.DataFrame:
+        key = {
+            "api": "stock_zh_a_hist",
+            "symbol": symbol,
+            "period": "daily",
+            "start_date": start_date,
+            "end_date": end_date,
+            "adjust": adjust,
+        }
+
+        def fetch():
+            return ak.stock_zh_a_hist(
+                symbol=symbol,
+                period="daily",
+                start_date=start_date,
+                end_date=end_date,
+                adjust=adjust,
+            )
+
+        hist_df, cache_hit, cache_path = self.data_cache.get_or_fetch_dataframe(
+            "hist",
+            key,
+            fetch,
+        )
+        if cache_hit:
+            log(f"  使用缓存日线: {symbol} ({cache_path})")
+        return hist_df.copy()
