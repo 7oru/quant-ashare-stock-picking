@@ -1,0 +1,433 @@
+"""
+回测管线
+Backtest pipeline for the multi-factor stock picker
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from datetime import datetime
+from typing import Dict, List, Tuple
+
+import numpy as np
+import pandas as pd
+
+from .config import POSITION_LIMITS
+from .factor_calculator import FactorCalculator
+from .market_features import calculate_price_features
+
+
+def log(msg):
+    print(msg)
+    sys.stdout.flush()
+
+
+class BacktestPipeline:
+    """
+    使用同一套因子模型做点时滚动回测。
+    """
+
+    def __init__(self):
+        self.factor_calculator = FactorCalculator()
+        self.position_limits = POSITION_LIMITS
+
+    def run(
+        self,
+        csv_path: str,
+        start_date: str,
+        end_date: str,
+        initial_capital: float = 1_000_000.0,
+        rebalance: str = "monthly",
+        lookback_days: int = 180,
+        top_n: int = 10,
+        fee_bps: float = 10.0,
+        output_dir: str = "results",
+    ) -> Dict[str, object]:
+        """
+        运行回测并保存结果。
+        """
+        stock_info = pd.read_csv(csv_path, index_col="stock_code", encoding="utf-8-sig")
+        stock_codes = stock_info.index.tolist()
+        start = pd.Timestamp(start_date)
+        end = pd.Timestamp(end_date)
+
+        histories = self._fetch_histories(stock_codes, start, end, lookback_days)
+        if not histories:
+            raise RuntimeError("没有获取到任何历史行情，无法回测")
+
+        calendar = self._build_calendar(histories, start, end)
+        if len(calendar) < 2:
+            raise RuntimeError("回测区间内交易日不足")
+
+        rebalance_dates = self._rebalance_dates(calendar, rebalance)
+        if not rebalance_dates:
+            raise RuntimeError("回测区间内没有可用调仓日")
+
+        close_panel = self._close_panel(histories, calendar)
+        stock_returns = close_panel.pct_change().replace([np.inf, -np.inf], np.nan)
+        benchmark_returns = stock_returns.mean(axis=1, skipna=True).fillna(0)
+
+        equity = float(initial_capital)
+        benchmark_equity = float(initial_capital)
+        previous_weights = pd.Series(dtype="float64")
+        equity_records = []
+        rebalance_records = []
+
+        for i, signal_date in enumerate(rebalance_dates):
+            signal_loc = calendar.get_loc(signal_date)
+            if signal_loc + 1 >= len(calendar):
+                continue
+
+            next_signal_date = rebalance_dates[i + 1] if i + 1 < len(rebalance_dates) else calendar[-1]
+            next_signal_loc = calendar.get_loc(next_signal_date)
+            trade_dates = calendar[signal_loc + 1 : next_signal_loc + 1]
+            if len(trade_dates) == 0:
+                continue
+
+            price_data, financial_data = self._build_signal_data(histories, signal_date, lookback_days)
+            if len(price_data) < max(3, min(top_n, 5)):
+                log(f"{signal_date.date()} 可用股票过少，跳过调仓")
+                continue
+
+            available_stock_info = stock_info.loc[stock_info.index.intersection(price_data.keys())]
+            factors = self.factor_calculator.calculate_all_factors(price_data, financial_data)
+            factors = self.factor_calculator.apply_industry_adjustment(factors, available_stock_info)
+            composite_score = self.factor_calculator.calculate_composite_score(factors)
+
+            ranking = self._build_ranking(available_stock_info, factors, composite_score)
+            weights = self._target_weights(ranking, top_n)
+            turnover = self._turnover(previous_weights, weights)
+            fee_rate = turnover * fee_bps / 10000
+            equity *= max(0, 1 - fee_rate)
+
+            log(
+                f"{signal_date.date()} 调仓: {len(weights)} 只, "
+                f"换手 {turnover:.2f}, 费用 {fee_rate:.4%}, "
+                f"现金 {max(0, 1 - weights.sum()):.1%}"
+            )
+
+            for rank, (stock_code, row) in enumerate(ranking.loc[weights.index].iterrows(), 1):
+                rebalance_records.append(
+                    {
+                        "signal_date": signal_date,
+                        "trade_start_date": trade_dates[0],
+                        "stock_code": stock_code,
+                        "stock_name": row.get("stock_name"),
+                        "sector": row.get("sector"),
+                        "rank": rank,
+                        "target_weight": weights.loc[stock_code],
+                        "composite_score": row.get("composite_score"),
+                        "momentum_score": row.get("momentum_score"),
+                        "quality_score": row.get("quality_score"),
+                        "liquidity_score": row.get("liquidity_score", 50),
+                    }
+                )
+
+            for trade_date in trade_dates:
+                daily_stock_returns = stock_returns.reindex(columns=weights.index).loc[trade_date].fillna(0)
+                strategy_return = float((daily_stock_returns * weights).sum())
+                benchmark_return = float(benchmark_returns.loc[trade_date])
+
+                equity *= 1 + strategy_return
+                benchmark_equity *= 1 + benchmark_return
+
+                equity_records.append(
+                    {
+                        "date": trade_date,
+                        "strategy_return": strategy_return,
+                        "benchmark_return": benchmark_return,
+                        "equity": equity,
+                        "benchmark_equity": benchmark_equity,
+                        "cash_weight": max(0.0, 1 - float(weights.sum())),
+                        "turnover": turnover if trade_date == trade_dates[0] else 0.0,
+                    }
+                )
+
+            previous_weights = weights
+
+        if not equity_records:
+            raise RuntimeError("没有生成任何回测净值记录")
+
+        equity_curve = pd.DataFrame(equity_records).set_index("date")
+        equity_curve["drawdown"] = equity_curve["equity"] / equity_curve["equity"].cummax() - 1
+        equity_curve["benchmark_drawdown"] = (
+            equity_curve["benchmark_equity"] / equity_curve["benchmark_equity"].cummax() - 1
+        )
+        rebalances = pd.DataFrame(rebalance_records)
+        summary = self._summary(equity_curve, initial_capital, len(rebalance_dates))
+
+        paths = self._save_outputs(summary, equity_curve, rebalances, output_dir)
+        return {
+            "summary": summary,
+            "equity_curve": equity_curve,
+            "rebalances": rebalances,
+            "paths": paths,
+        }
+
+    def _fetch_histories(
+        self,
+        stock_codes: List[str],
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+        lookback_days: int,
+    ) -> Dict[str, pd.DataFrame]:
+        try:
+            import akshare as ak
+        except ImportError as exc:
+            raise ImportError("akshare未安装，请先运行: pip install akshare") from exc
+
+        fetch_start = start - pd.Timedelta(days=int(lookback_days * 1.8) + 30)
+        histories: Dict[str, pd.DataFrame] = {}
+        total = len(stock_codes)
+
+        for i, code in enumerate(stock_codes, 1):
+            symbol = code.replace(".SZ", "").replace(".SH", "")
+            log(f"[{i}/{total}] 获取回测历史: {code}")
+            try:
+                df = ak.stock_zh_a_hist(
+                    symbol=symbol,
+                    period="daily",
+                    start_date=fetch_start.strftime("%Y%m%d"),
+                    end_date=end.strftime("%Y%m%d"),
+                    adjust="qfq",
+                )
+                if df is None or df.empty:
+                    log(f"  无历史数据: {code}")
+                    continue
+                df = df.copy()
+                df["日期"] = pd.to_datetime(df["日期"])
+                df = df.sort_values("日期").set_index("日期")
+                df["收盘"] = pd.to_numeric(df["收盘"], errors="coerce")
+                df = df[df["收盘"].notna()]
+                if len(df) >= 60:
+                    histories[code] = df
+            except Exception as exc:
+                log(f"  获取失败: {code} - {exc}")
+
+        log(f"历史行情获取完成: {len(histories)}/{total} 只")
+        return histories
+
+    @staticmethod
+    def _build_calendar(
+        histories: Dict[str, pd.DataFrame],
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> pd.DatetimeIndex:
+        all_dates = sorted(set().union(*(history.index for history in histories.values())))
+        calendar = pd.DatetimeIndex(all_dates)
+        return calendar[(calendar >= start) & (calendar <= end)]
+
+    @staticmethod
+    def _rebalance_dates(calendar: pd.DatetimeIndex, rebalance: str) -> List[pd.Timestamp]:
+        frequency = rebalance.lower()
+        if frequency in {"w", "week", "weekly"}:
+            periods = calendar.to_period("W-FRI")
+        elif frequency in {"q", "quarter", "quarterly"}:
+            periods = calendar.to_period("Q")
+        else:
+            periods = calendar.to_period("M")
+
+        dates = pd.Series(calendar, index=calendar).groupby(periods).max().tolist()
+        return [date for date in dates if calendar.get_loc(date) < len(calendar) - 1]
+
+    @staticmethod
+    def _close_panel(histories: Dict[str, pd.DataFrame], calendar: pd.DatetimeIndex) -> pd.DataFrame:
+        closes = {
+            code: pd.to_numeric(history["收盘"], errors="coerce")
+            for code, history in histories.items()
+        }
+        return pd.DataFrame(closes).reindex(calendar).ffill()
+
+    def _build_signal_data(
+        self,
+        histories: Dict[str, pd.DataFrame],
+        signal_date: pd.Timestamp,
+        lookback_days: int,
+    ) -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
+        price_data = {}
+        financial_data = {}
+        min_history = min(60, max(30, lookback_days // 3))
+
+        for code, history in histories.items():
+            point_in_time = history.loc[history.index <= signal_date].tail(lookback_days)
+            if len(point_in_time) < min_history:
+                continue
+            try:
+                features = calculate_price_features(point_in_time.reset_index())
+            except Exception:
+                continue
+
+            ytd_history = history.loc[
+                (history.index <= signal_date) & (history.index.year == signal_date.year)
+            ]
+            if len(ytd_history) >= 2 and ytd_history["收盘"].iloc[0] != 0:
+                returns_ytd = (ytd_history["收盘"].iloc[-1] / ytd_history["收盘"].iloc[0] - 1) * 100
+            else:
+                returns_ytd = np.nan
+
+            latest = point_in_time.iloc[-1]
+            amplitude = self._number(latest.get("振幅"))
+            price_data[code] = features
+            financial_data[code] = {
+                "returns_5d": features.get("returns_5d"),
+                "returns_60d": features.get("returns_60d"),
+                "returns_ytd": returns_ytd,
+                "turnover_rate": features.get("turnover_rate"),
+                "volume_ratio": features.get("volume_ratio"),
+                "amplitude": amplitude,
+                "pe_ttm": None,
+                "pb": None,
+                "ps": None,
+                "pcf": None,
+                "market_cap": None,
+                "circ_market_cap": None,
+                "roe": None,
+                "gross_margin": None,
+                "revenue_growth_yoy": None,
+                "net_profit_growth_yoy": None,
+                "net_profit_margin": None,
+                "peg": None,
+                "cash_flow_to_net_profit": None,
+            }
+
+        return price_data, financial_data
+
+    @staticmethod
+    def _build_ranking(
+        stock_info: pd.DataFrame,
+        factors: pd.DataFrame,
+        composite_score: pd.Series,
+    ) -> pd.DataFrame:
+        ranking = pd.DataFrame(
+            {
+                "stock_name": stock_info["stock_name"],
+                "sector": stock_info["sector"],
+                "sub_sector": stock_info["sub_sector"],
+                "ai_exposure": stock_info["ai_exposure"],
+                "composite_score": composite_score,
+                "momentum_score": factors["momentum_score"],
+                "growth_score": factors["growth_score"],
+                "valuation_score": factors["valuation_score"],
+                "quality_score": factors["quality_score"],
+                "volatility_score": factors["volatility_score"],
+                "liquidity_score": factors.get("liquidity_score", 50),
+            }
+        ).sort_values("composite_score", ascending=False)
+        ranking["rank"] = range(1, len(ranking) + 1)
+        return ranking
+
+    def _target_weights(self, ranking: pd.DataFrame, top_n: int) -> pd.Series:
+        selected = ranking.head(top_n).copy()
+        if selected.empty:
+            return pd.Series(dtype="float64")
+
+        scores = selected["composite_score"].clip(lower=0)
+        if scores.sum() <= 0:
+            weights = pd.Series(1 / len(selected), index=selected.index)
+        else:
+            weights = scores / scores.sum()
+
+        weights = self._cap_single_stock(weights, self.position_limits["max_single_stock"])
+        weights = self._cap_sector(weights, selected, self.position_limits["max_sector"])
+        weights = weights[weights > 0]
+        return weights.sort_values(ascending=False)
+
+    @staticmethod
+    def _cap_single_stock(weights: pd.Series, cap: float) -> pd.Series:
+        weights = weights.copy()
+        for _ in range(20):
+            over_cap = weights > cap
+            if not over_cap.any():
+                break
+            excess = (weights[over_cap] - cap).sum()
+            weights[over_cap] = cap
+            under_cap = weights < cap
+            if excess <= 0 or weights[under_cap].sum() <= 0:
+                break
+            weights[under_cap] += excess * weights[under_cap] / weights[under_cap].sum()
+        return weights.clip(lower=0)
+
+    @staticmethod
+    def _cap_sector(weights: pd.Series, ranking: pd.DataFrame, cap: float) -> pd.Series:
+        weights = weights.copy()
+        for sector, sector_rows in ranking.loc[weights.index].groupby("sector"):
+            sector_weight = weights.reindex(sector_rows.index).sum()
+            if sector_weight > cap and sector_weight > 0:
+                weights.loc[sector_rows.index] *= cap / sector_weight
+        return weights
+
+    @staticmethod
+    def _turnover(previous: pd.Series, current: pd.Series) -> float:
+        all_index = previous.index.union(current.index)
+        return float((current.reindex(all_index).fillna(0) - previous.reindex(all_index).fillna(0)).abs().sum())
+
+    @staticmethod
+    def _summary(equity_curve: pd.DataFrame, initial_capital: float, rebalance_count: int) -> pd.DataFrame:
+        strategy_metrics = BacktestPipeline._metrics(
+            equity_curve["equity"],
+            equity_curve["strategy_return"],
+            initial_capital,
+        )
+        benchmark_metrics = BacktestPipeline._metrics(
+            equity_curve["benchmark_equity"],
+            equity_curve["benchmark_return"],
+            initial_capital,
+        )
+        summary = pd.DataFrame(
+            [
+                {"name": "strategy", **strategy_metrics},
+                {"name": "universe_equal_weight", **benchmark_metrics},
+            ]
+        )
+        summary["rebalance_count"] = rebalance_count
+        summary.loc[summary["name"] == "strategy", "avg_turnover"] = equity_curve["turnover"].replace(0, np.nan).mean()
+        return summary
+
+    @staticmethod
+    def _metrics(equity: pd.Series, returns: pd.Series, initial_capital: float) -> Dict[str, float]:
+        n = len(returns)
+        total_return = equity.iloc[-1] / initial_capital - 1
+        annual_return = (1 + total_return) ** (252 / n) - 1 if n > 0 else np.nan
+        annual_volatility = returns.std(ddof=1) * np.sqrt(252) if n > 1 else np.nan
+        sharpe = returns.mean() / returns.std(ddof=1) * np.sqrt(252) if n > 1 and returns.std(ddof=1) > 0 else np.nan
+        drawdown = equity / equity.cummax() - 1
+        return {
+            "total_return": total_return,
+            "annual_return": annual_return,
+            "annual_volatility": annual_volatility,
+            "sharpe": sharpe,
+            "max_drawdown": drawdown.min(),
+            "win_rate": (returns > 0).mean(),
+            "final_equity": equity.iloc[-1],
+            "trading_days": n,
+        }
+
+    @staticmethod
+    def _save_outputs(
+        summary: pd.DataFrame,
+        equity_curve: pd.DataFrame,
+        rebalances: pd.DataFrame,
+        output_dir: str,
+    ) -> Dict[str, str]:
+        os.makedirs(output_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        paths = {
+            "summary": os.path.join(output_dir, f"backtest_summary_{timestamp}.csv"),
+            "equity": os.path.join(output_dir, f"backtest_equity_{timestamp}.csv"),
+            "rebalances": os.path.join(output_dir, f"backtest_rebalances_{timestamp}.csv"),
+        }
+        summary.to_csv(paths["summary"], index=False)
+        equity_curve.to_csv(paths["equity"])
+        rebalances.to_csv(paths["rebalances"], index=False)
+        return paths
+
+    @staticmethod
+    def _number(value) -> float:
+        if value is None:
+            return np.nan
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return np.nan
+        return number if np.isfinite(number) else np.nan

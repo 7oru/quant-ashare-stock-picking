@@ -7,11 +7,12 @@ Configuration Module
 
 # 因子权重配置
 FACTOR_WEIGHTS = {
-    'momentum': 0.50,      # 动量因子权重
-    'growth': 0.15,        # 成长因子权重
-    'valuation': 0.15,     # 估值因子权重
-    'quality': 0.10,       # 质量因子权重
-    'volatility': 0.10     # 波动率因子权重
+    'momentum': 0.30,      # 趋势、加速度、风险调整动量
+    'quality': 0.20,       # 盈利质量；缺失时用估值/风险/流动性代理
+    'growth': 0.15,        # 财务成长；缺失时用YTD和风险调整动量代理
+    'valuation': 0.15,     # PE/PB/PS/PCF/PEG，低估值高分
+    'volatility': 0.10,    # 年化波动、下行波动、回撤、ATR
+    'liquidity': 0.10      # 换手、量比、市值/成交额
 }
 
 # 行业调整系数（不同行业的因子需要调整）

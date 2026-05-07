@@ -44,6 +44,8 @@ def main():
                        help='输出文件路径 (默认: results/ranking_result_yyyymmdd_hhmmss.csv)')
     parser.add_argument('--capital', type=float, default=100.0,
                        help='总资金（亿元）')
+    parser.add_argument('--lookback-days', type=int, default=240,
+                       help='历史价格回溯天数')
     parser.add_argument('--report', action='store_true',
                        help='生成详细分析报告')
 
@@ -56,7 +58,8 @@ def main():
     ranking, allocation = ranker.rank_stocks(
         csv_path=args.csv,
         total_capital=args.capital,
-        output_path=args.output
+        output_path=args.output,
+        lookback_days=args.lookback_days
     )
     
     # 生成报告

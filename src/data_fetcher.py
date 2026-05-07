@@ -5,11 +5,12 @@ Data Fetching Module
 从akshare获取真实股票数据
 """
 
-import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List
 import sys
+
+from .market_features import calculate_price_features
 
 # Use print for progress updates
 def log(msg):
@@ -31,7 +32,7 @@ class StockDataFetcher:
         self.cache = {}
         
     def get_price_data(self, stock_codes: List[str],
-                       lookback_days: int = 90) -> Dict[str, Dict]:
+                       lookback_days: int = 240) -> Dict[str, Dict]:
         """
         获取股票价格数据
 
@@ -120,183 +121,10 @@ class StockDataFetcher:
                         failed_stocks.append(code)
                         continue
                         
-                    df = df.sort_values('日期')
-                    prices = df['收盘'].values
-                    highs = df['最高'].values if '最高' in df.columns else prices
-                    lows = df['最低'].values if '最低' in df.columns else prices
-                    volumes = df['成交量'].values if '成交量' in df.columns else np.ones(len(prices))
-                    
-                    # ========== 基础移动平均线 ==========
-                    ma20 = pd.Series(prices[-20:]).mean() if len(prices) >= 20 else prices[-1]
-                    ma60 = pd.Series(prices[-60:]).mean() if len(prices) >= 60 else ma20
-                    ma5 = pd.Series(prices[-5:]).mean() if len(prices) >= 5 else prices[-1]
-                    
-                    # ========== RSI (14日) ==========
-                    delta = np.diff(prices)
-                    gain = np.where(delta > 0, delta, 0)
-                    loss = np.where(delta < 0, -delta, 0)
-                    avg_gain = np.mean(gain[-14:]) if len(gain) >= 14 else np.mean(gain) if len(gain) > 0 else 0.01
-                    avg_loss = np.mean(loss[-14:]) if len(loss) >= 14 else np.mean(loss) if len(loss) > 0 else 0.01
-                    rsi = 100 * (avg_gain / (avg_gain + avg_loss)) if (avg_gain + avg_loss) > 0 else 50
-                    
-                    # ========== MACD ==========
-                    ema12 = pd.Series(prices).ewm(span=12, adjust=False).mean().iloc[-1] if len(prices) >= 12 else prices[-1]
-                    ema26 = pd.Series(prices).ewm(span=26, adjust=False).mean().iloc[-1] if len(prices) >= 26 else prices[-1]
-                    macd_line = ema12 - ema26
-                    signal_line = pd.Series([macd_line] * len(prices[-9:])).ewm(span=9, adjust=False).mean().iloc[-1] if len(prices) >= 9 else macd_line
-                    macd_histogram = macd_line - signal_line
-                    
-                    # ========== Bollinger Bands ==========
-                    bb_period = 20
-                    if len(prices) >= bb_period:
-                        bb_ma = np.mean(prices[-bb_period:])
-                        bb_std = np.std(prices[-bb_period:])
-                        bb_upper = bb_ma + 2 * bb_std
-                        bb_lower = bb_ma - 2 * bb_std
-                        bb_percent = ((prices[-1] - bb_lower) / (bb_upper - bb_lower)) * 100 if (bb_upper - bb_lower) > 0 else 50
-                        bb_width = ((bb_upper - bb_lower) / bb_ma) * 100 if bb_ma > 0 else 0
-                    else:
-                        bb_upper = bb_lower = bb_percent = bb_width = None
-                    
-                    # ========== Stochastic Oscillator (%K, %D) ==========
-                    stoch_period = 14
-                    if len(prices) >= stoch_period:
-                        highest_high = np.max(highs[-stoch_period:])
-                        lowest_low = np.min(lows[-stoch_period:])
-                        stoch_k = 100 * ((prices[-1] - lowest_low) / (highest_high - lowest_low)) if (highest_high - lowest_low) > 0 else 50
-                        # %D is 3-period SMA of %K
-                        stoch_d = np.mean([stoch_k] * min(3, len(prices))) if len(prices) >= 3 else stoch_k
-                    else:
-                        stoch_k = stoch_d = None
-                    
-                    # ========== ATR (Average True Range) ==========
-                    atr_period = 14
-                    if len(prices) >= atr_period and len(highs) == len(prices) and len(lows) == len(prices):
-                        true_ranges = []
-                        for i in range(1, len(prices)):
-                            tr1 = highs[i] - lows[i]
-                            tr2 = abs(highs[i] - prices[i-1])
-                            tr3 = abs(lows[i] - prices[i-1])
-                            true_ranges.append(max(tr1, tr2, tr3))
-                        atr = np.mean(true_ranges[-atr_period:]) if len(true_ranges) >= atr_period else np.mean(true_ranges) if true_ranges else 0
-                        atr_percent = (atr / prices[-1]) * 100 if prices[-1] > 0 else 0
-                    else:
-                        atr = atr_percent = None
-                    
-                    # ========== Williams %R ==========
-                    wr_period = 14
-                    if len(prices) >= wr_period:
-                        highest_high_wr = np.max(highs[-wr_period:])
-                        lowest_low_wr = np.min(lows[-wr_period:])
-                        williams_r = -100 * ((highest_high_wr - prices[-1]) / (highest_high_wr - lowest_low_wr)) if (highest_high_wr - lowest_low_wr) > 0 else -50
-                    else:
-                        williams_r = None
-                    
-                    # ========== CCI (Commodity Channel Index) ==========
-                    cci_period = 20
-                    if len(prices) >= cci_period:
-                        typical_price = (highs[-cci_period:] + lows[-cci_period:] + prices[-cci_period:]) / 3
-                        sma_tp = np.mean(typical_price)
-                        mean_deviation = np.mean(np.abs(typical_price - sma_tp))
-                        cci = (typical_price[-1] - sma_tp) / (0.015 * mean_deviation) if mean_deviation > 0 else 0
-                    else:
-                        cci = None
-                    
-                    # ========== Volume Indicators ==========
-                    # OBV (On-Balance Volume)
-                    if len(volumes) == len(prices) and len(prices) > 1:
-                        obv = 0
-                        for i in range(1, len(prices)):
-                            if prices[i] > prices[i-1]:
-                                obv += volumes[i]
-                            elif prices[i] < prices[i-1]:
-                                obv -= volumes[i]
-                        obv_change = obv - (obv - volumes[-1] if prices[-1] > prices[-2] else obv + volumes[-1]) if len(prices) >= 2 else 0
-                    else:
-                        obv = obv_change = None
-                    
-                    # Volume MA
-                    volume_ma20 = np.mean(volumes[-20:]) if len(volumes) >= 20 else np.mean(volumes) if len(volumes) > 0 else 0
-                    volume_ratio_current = volumes[-1] / volume_ma20 if volume_ma20 > 0 else 1.0
-                    
-                    # ========== Price Position Indicators ==========
-                    # Price position relative to recent range
-                    if len(prices) >= 20:
-                        recent_high = np.max(prices[-20:])
-                        recent_low = np.min(prices[-20:])
-                        price_position = ((prices[-1] - recent_low) / (recent_high - recent_low)) * 100 if (recent_high - recent_low) > 0 else 50
-                    else:
-                        price_position = 50
-                    
-                    # ========== Trend Strength ==========
-                    # ADX-like calculation (simplified)
-                    if len(prices) >= 14:
-                        up_moves = np.where(np.diff(prices) > 0, np.diff(prices), 0)
-                        down_moves = np.where(np.diff(prices) < 0, -np.diff(prices), 0)
-                        avg_up = np.mean(up_moves[-14:]) if len(up_moves) >= 14 else np.mean(up_moves) if len(up_moves) > 0 else 0.01
-                        avg_down = np.mean(down_moves[-14:]) if len(down_moves) >= 14 else np.mean(down_moves) if len(down_moves) > 0 else 0.01
-                        trend_strength = 100 * abs(avg_up - avg_down) / (avg_up + avg_down) if (avg_up + avg_down) > 0 else 0
-                    else:
-                        trend_strength = 0
-                    
-                    # ========== 最大回撤 ==========
-                    peak = np.maximum.accumulate(prices)
-                    drawdown = (prices - peak) / peak
-                    max_drawdown = abs(np.min(drawdown)) * 100
-                    
-                    # ========== 波动率 ==========
-                    volatility = np.std(prices[-90:]) / np.mean(prices[-90:]) * np.sqrt(252) if len(prices) >= 90 else 0.3
-                    
-                    price_data[code] = {
-                        'current_price': prices[-1],
-                        'prices_90d': prices,
-                        
-                        # 移动平均线
-                        'ma5': ma5,
-                        'ma20': ma20,
-                        'ma60': ma60,
-                        
-                        # 动量指标
-                        'rsi': min(max(rsi, 0), 100),
-                        'macd': macd_line,
-                        'macd_signal': signal_line,
-                        'macd_histogram': macd_histogram,
-                        'stoch_k': stoch_k if stoch_k is not None else 50,
-                        'stoch_d': stoch_d if stoch_d is not None else 50,
-                        'williams_r': williams_r if williams_r is not None else -50,
-                        'cci': cci if cci is not None else 0,
-                        
-                        # 波动率指标
-                        'volatility': volatility,
-                        'atr': atr if atr is not None else 0,
-                        'atr_percent': atr_percent if atr_percent is not None else 0,
-                        'max_drawdown': max_drawdown,
-                        
-                        # 布林带
-                        'bb_upper': bb_upper if bb_upper is not None else prices[-1],
-                        'bb_lower': bb_lower if bb_lower is not None else prices[-1],
-                        'bb_percent': bb_percent if bb_percent is not None else 50,
-                        'bb_width': bb_width if bb_width is not None else 0,
-                        
-                        # 成交量指标
-                        'volume_ma20': volume_ma20,
-                        'volume_ratio': volume_ratio_current,
-                        'obv': obv if obv is not None else 0,
-                        'obv_change': obv_change if obv_change is not None else 0,
-                        
-                        # 价格位置
-                        'price_position': price_position,
-                        'trend_strength': trend_strength,
-                        
-                        # 收益率
-                        'returns_20d': (prices[-1] - prices[-20]) / prices[-20] * 100 if len(prices) >= 20 else 0,
-                        'returns_60d': (prices[-1] - prices[-60]) / prices[-60] * 100 if len(prices) >= 60 else 0,
-                        
-                        # 换手率
-                        'turnover_rate': df['换手率'].iloc[-20:].mean() if '换手率' in df.columns else 3.0,
-                    }
-                    
-                    log(f"  [{i}/{total}] 完成: {code} (价格: {prices[-1]:.2f})")
+                    features = calculate_price_features(df)
+                    price_data[code] = features
+
+                    log(f"  [{i}/{total}] 完成: {code} (价格: {features['current_price']:.2f})")
                         
                 except Exception as e:
                     log(f"  [{i}/{total}] 失败: {code} - {str(e)}")

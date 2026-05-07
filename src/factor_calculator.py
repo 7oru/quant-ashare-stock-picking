@@ -2,11 +2,15 @@
 因子计算模块
 Factor Calculation Module
 
-计算六个维度的因子得分
+计算六个维度的因子得分：动量、成长、估值、质量、波动率、流动性。
 """
 
+from __future__ import annotations
+
+from typing import Dict, List, Tuple
+
+import numpy as np
 import pandas as pd
-from typing import Dict
 
 from .config import INDUSTRY_ADJUSTMENT
 
@@ -14,321 +18,536 @@ from .config import INDUSTRY_ADJUSTMENT
 class FactorCalculator:
     """
     因子计算器
-    计算六个维度的因子得分
+
+    使用稳健的横截面百分位得分，避免极端值把一整批股票的分数拉偏。
     """
-    
+
+    SCORE_COLUMNS = [
+        "momentum_score",
+        "growth_score",
+        "valuation_score",
+        "quality_score",
+        "volatility_score",
+        "liquidity_score",
+    ]
+
     def __init__(self):
         self.factors = {}
-        
-    def calculate_all_factors(self, 
-                             price_data: Dict[str, Dict],
-                             financial_data: Dict[str, Dict]) -> pd.DataFrame:
+
+    def calculate_all_factors(
+        self,
+        price_data: Dict[str, Dict],
+        financial_data: Dict[str, Dict],
+    ) -> pd.DataFrame:
         """
-        计算所有因子得分
-        
+        计算所有因子得分。
+
         Args:
-            price_data: 价格数据
-            financial_data: 财务数据
-            
+            price_data: 点时价格/技术特征
+            financial_data: 估值、成交、财务特征
+
         Returns:
-            包含所有因子得分的DataFrame
+            包含原始因子和因子得分的 DataFrame
         """
         stocks = list(price_data.keys())
-        
-        # 初始化因子DataFrame
+        financial_data = financial_data or {}
         factors = pd.DataFrame(index=stocks)
-        
-        # 1. 动量因子得分
-        # 优先使用实时行情的收益率数据，否则使用历史数据计算
-        momentum_20d = []
-        momentum_60d = []
-        macd_signals = []
-        rsi_values = []
-        stoch_values = []
-        
-        for s in stocks:
-            # 优先使用financial_data中的实时收益率
-            ret_60d = financial_data[s].get('returns_60d') if s in financial_data else None
-            ret_5d = financial_data[s].get('returns_5d') if s in financial_data else None
-            
-            if ret_60d is not None:
-                momentum_60d.append(ret_60d)
-                # 如果没有20日数据，使用5日数据推算或60日数据估算
-                if ret_5d is not None:
-                    momentum_20d.append(ret_5d * 4)  # 近似20日收益
-                else:
-                    momentum_20d.append(ret_60d * 0.33)  # 使用60日的1/3作为近似
-            else:
-                # 使用历史数据计算
-                momentum_20d.append(price_data[s].get('returns_20d', 0))
-                momentum_60d.append(price_data[s].get('returns_60d', 0))
-            
-            # 提取技术指标
-            macd_hist = price_data[s].get('macd_histogram', 0)
-            macd_signals.append(macd_hist)
-            rsi_values.append(price_data[s].get('rsi', 50))
-            stoch_k = price_data[s].get('stoch_k', 50)
-            stoch_d = price_data[s].get('stoch_d', 50)
-            stoch_values.append((stoch_k + stoch_d) / 2)
-        
-        factors['momentum_20d'] = momentum_20d
-        factors['momentum_60d'] = momentum_60d
-        factors['ma_distance'] = [(price_data[s]['current_price'] / price_data[s]['ma60'] - 1) * 100 
-                                   for s in stocks]
-        factors['macd_signal'] = macd_signals
-        factors['rsi'] = rsi_values
-        factors['stoch'] = stoch_values
-        
-        # 增强动量得分：结合收益率、MACD、RSI、Stochastic
-        factors['momentum_score'] = (
-            0.3 * self._normalize(factors['momentum_20d']) +
-            0.3 * self._normalize(factors['momentum_60d']) +
-            0.15 * self._normalize(factors['ma_distance']) +
-            0.15 * self._normalize(factors['macd_signal']) +
-            0.1 * self._normalize(factors['rsi'])
+
+        # ========== 1. 动量因子 ==========
+        factors["momentum_5d"] = self._series(
+            [self._coalesce(stock, price_data, financial_data, "returns_5d") for stock in stocks],
+            stocks,
         )
-        
-        # 2. 成长因子得分
-        # 如果财务数据中没有成长数据，使用收益率作为代理
-        revenue_growth = []
-        profit_growth = []
-        for s in stocks:
-            rev_growth = financial_data[s].get('revenue_growth_yoy')
-            prof_growth = financial_data[s].get('net_profit_growth_yoy')
-            
-            # 如果没有财务成长数据，使用YTD收益率作为代理
-            if rev_growth is None and s in financial_data:
-                ytd_return = financial_data[s].get('returns_ytd')
-                if ytd_return is not None:
-                    rev_growth = ytd_return * 0.8  # 假设营收增长约为股价增长的80%
-                    prof_growth = ytd_return * 1.2  # 假设利润增长约为股价增长的120%
-                else:
-                    rev_growth = 0
-                    prof_growth = 0
-            elif rev_growth is None:
-                rev_growth = 0
-            if prof_growth is None:
-                prof_growth = 0
-            
-            revenue_growth.append(rev_growth)
-            profit_growth.append(prof_growth)
-        
-        factors['revenue_growth'] = revenue_growth
-        factors['profit_growth'] = profit_growth
-        
-        # 如果所有成长数据都为0，则使用动量因子作为代理
-        if all(x == 0 for x in revenue_growth) and all(x == 0 for x in profit_growth):
-            factors['growth_score'] = factors['momentum_score'] * 0.8
+        factors["momentum_20d"] = self._series(
+            [self._coalesce(stock, price_data, financial_data, "returns_20d") for stock in stocks],
+            stocks,
+        )
+        missing_20d = factors["momentum_20d"].isna() & factors["momentum_5d"].notna()
+        factors.loc[missing_20d, "momentum_20d"] = factors.loc[missing_20d, "momentum_5d"] * 4
+
+        factors["momentum_60d"] = self._series(
+            [self._coalesce(stock, price_data, financial_data, "returns_60d") for stock in stocks],
+            stocks,
+        )
+        factors["momentum_120d"] = self._series(
+            [self._coalesce(stock, price_data, financial_data, "returns_120d") for stock in stocks],
+            stocks,
+        )
+        factors["returns_ytd"] = self._series(
+            [self._coalesce(stock, price_data, financial_data, "returns_ytd") for stock in stocks],
+            stocks,
+        )
+
+        factors["current_price"] = self._series(
+            [self._number(price_data.get(stock, {}).get("current_price")) for stock in stocks],
+            stocks,
+        )
+        factors["ma20_distance"] = self._series(
+            [
+                self._first_number(
+                    price_data.get(stock, {}).get("ma20_distance"),
+                    self._pct_distance(
+                        price_data.get(stock, {}).get("current_price"),
+                        price_data.get(stock, {}).get("ma20"),
+                    ),
+                )
+                for stock in stocks
+            ],
+            stocks,
+        )
+        factors["ma60_distance"] = self._series(
+            [
+                self._first_number(
+                    price_data.get(stock, {}).get("ma60_distance"),
+                    self._pct_distance(
+                        price_data.get(stock, {}).get("current_price"),
+                        price_data.get(stock, {}).get("ma60"),
+                    ),
+                )
+                for stock in stocks
+            ],
+            stocks,
+        )
+        factors["return_acceleration"] = self._series(
+            [
+                self._first_number(
+                    price_data.get(stock, {}).get("return_acceleration"),
+                    self._number(price_data.get(stock, {}).get("returns_20d"))
+                    - self._number(price_data.get(stock, {}).get("returns_60d")) / 3,
+                )
+                for stock in stocks
+            ],
+            stocks,
+        )
+
+        factors["rsi"] = self._series([self._coalesce(stock, price_data, financial_data, "rsi", default=50) for stock in stocks], stocks)
+        factors["stoch"] = self._series(
+            [
+                np.nanmean(
+                    [
+                        self._coalesce(stock, price_data, financial_data, "stoch_k", default=50),
+                        self._coalesce(stock, price_data, financial_data, "stoch_d", default=50),
+                    ]
+                )
+                for stock in stocks
+            ],
+            stocks,
+        )
+        factors["macd_signal"] = self._series(
+            [
+                self._pct_distance(
+                    price_data.get(stock, {}).get("macd_histogram"),
+                    price_data.get(stock, {}).get("current_price"),
+                )
+                for stock in stocks
+            ],
+            stocks,
+        )
+        factors["trend_strength"] = self._series(
+            [self._coalesce(stock, price_data, financial_data, "trend_strength", default=0) for stock in stocks],
+            stocks,
+        )
+        factors["price_position"] = self._series(
+            [self._coalesce(stock, price_data, financial_data, "price_position", default=50) for stock in stocks],
+            stocks,
+        )
+
+        # 原始风险指标先放入，给风险调整动量使用。
+        factors["volatility"] = self._series(
+            [self._coalesce(stock, price_data, financial_data, "volatility") for stock in stocks],
+            stocks,
+        )
+        factors["risk_adjusted_momentum"] = (
+            factors["momentum_60d"] / factors["volatility"].replace(0, np.nan)
+        )
+
+        factors["rsi_health"] = self._score_target(factors["rsi"], target=58, tolerance=24)
+        factors["stoch_health"] = self._score_target(factors["stoch"], target=60, tolerance=30)
+        momentum_components: List[Tuple[float, pd.Series]] = []
+        self._add_component(momentum_components, 0.24, factors["momentum_20d"], self._score_high(factors["momentum_20d"]))
+        self._add_component(momentum_components, 0.22, factors["momentum_60d"], self._score_high(factors["momentum_60d"]))
+        self._add_component(momentum_components, 0.14, factors["return_acceleration"], self._score_high(factors["return_acceleration"]))
+        self._add_component(momentum_components, 0.12, factors["ma20_distance"], self._score_high(factors["ma20_distance"]))
+        self._add_component(momentum_components, 0.10, factors["macd_signal"], self._score_high(factors["macd_signal"]))
+        self._add_component(momentum_components, 0.08, factors["trend_strength"], self._score_high(factors["trend_strength"]))
+        self._add_component(momentum_components, 0.05, factors["rsi"], factors["rsi_health"])
+        self._add_component(momentum_components, 0.05, factors["stoch"], factors["stoch_health"])
+        factors["momentum_score"] = self._weighted_score(momentum_components, factors.index)
+
+        # ========== 2. 成长因子 ==========
+        factors["revenue_growth"] = self._series(
+            [self._number(financial_data.get(stock, {}).get("revenue_growth_yoy")) for stock in stocks],
+            stocks,
+        )
+        factors["profit_growth"] = self._series(
+            [self._number(financial_data.get(stock, {}).get("net_profit_growth_yoy")) for stock in stocks],
+            stocks,
+        )
+        factors["net_profit_margin"] = self._series(
+            [self._number(financial_data.get(stock, {}).get("net_profit_margin")) for stock in stocks],
+            stocks,
+        )
+        factors["growth_data_coverage"] = (
+            factors[["revenue_growth", "profit_growth"]].notna().sum(axis=1) / 2
+        )
+
+        growth_proxy = self._weighted_score(
+            [
+                (0.40, self._score_high(factors["returns_ytd"])),
+                (0.30, self._score_high(factors["momentum_120d"])),
+                (0.30, self._score_high(factors["risk_adjusted_momentum"])),
+            ],
+            factors.index,
+        )
+
+        fundamental_growth_components: List[Tuple[float, pd.Series]] = []
+        self._add_component(fundamental_growth_components, 0.45, factors["revenue_growth"], self._score_high(factors["revenue_growth"]))
+        self._add_component(fundamental_growth_components, 0.45, factors["profit_growth"], self._score_high(factors["profit_growth"]))
+        self._add_component(fundamental_growth_components, 0.10, factors["net_profit_margin"], self._score_high(factors["net_profit_margin"]))
+        if fundamental_growth_components:
+            fundamental_growth = self._weighted_score(fundamental_growth_components, factors.index)
+            factors["growth_score"] = 0.75 * fundamental_growth + 0.25 * growth_proxy
         else:
-            factors['growth_score'] = (
-                0.5 * self._normalize(factors['revenue_growth']) +
-                0.5 * self._normalize(factors['profit_growth'])
-            )
-        
-        # 3. 估值因子得分（估值越低得分越高）
-        # 使用实际数据，缺失时使用中位数填充
-        pe_values = [financial_data[s].get('pe_ttm') for s in stocks]
-        pb_values = [financial_data[s].get('pb') for s in stocks]
-        ps_values = [financial_data[s].get('ps') for s in stocks]
-        
-        # 计算有效值的中位数作为默认值
-        pe_valid = [v for v in pe_values if v is not None]
-        pb_valid = [v for v in pb_values if v is not None]
-        ps_valid = [v for v in ps_values if v is not None]
-        
-        pe_default = pd.Series(pe_valid).median() if pe_valid else 50.0
-        pb_default = pd.Series(pb_valid).median() if pb_valid else 3.0
-        ps_default = pd.Series(ps_valid).median() if ps_valid else 0.0
-        
-        factors['pe'] = [v if v is not None else pe_default for v in pe_values]
-        factors['pb'] = [v if v is not None else pb_default for v in pb_values]
-        factors['ps'] = [v if v is not None else ps_default for v in ps_values]
-        
-        # 计算PEG（如果可用），否则使用PE/PB组合
-        peg_values = []
-        for s in stocks:
-            peg = financial_data[s].get('peg')
-            if peg is None and factors.loc[s, 'profit_growth'] != 0:
-                # 估算PEG = PE / 利润增长率
-                pe_val = factors.loc[s, 'pe']
-                prof_growth = abs(factors.loc[s, 'profit_growth'])
-                if prof_growth > 0:
-                    peg = pe_val / prof_growth
-                else:
-                    peg = None
-            if peg is not None and (peg <= 0 or peg > 10):
-                peg = None
-            peg_values.append(peg if peg is not None else 0)
-        factors['peg'] = peg_values
-        
-        # 估值得分：使用PE和PB，如果有PS也加入
-        if any(factors['ps'] > 0):
-            factors['valuation_score'] = (
-                0.3 * (1 - self._normalize(factors['pe'])) +
-                0.3 * (1 - self._normalize(factors['pb'])) +
-                0.2 * (1 - self._normalize(factors['ps'])) +
-                0.2 * (1 - self._normalize(factors['peg']))
+            factors["growth_score"] = growth_proxy
+
+        # ========== 3. 估值因子（越低越好） ==========
+        factors["pe"] = self._positive_series(
+            [financial_data.get(stock, {}).get("pe_ttm") for stock in stocks],
+            stocks,
+        )
+        factors["pb"] = self._positive_series(
+            [financial_data.get(stock, {}).get("pb") for stock in stocks],
+            stocks,
+        )
+        factors["ps"] = self._positive_series(
+            [financial_data.get(stock, {}).get("ps") for stock in stocks],
+            stocks,
+        )
+        factors["pcf"] = self._positive_series(
+            [financial_data.get(stock, {}).get("pcf") for stock in stocks],
+            stocks,
+        )
+        factors["peg"] = self._series(
+            [self._estimate_peg(stock, financial_data, factors) for stock in stocks],
+            stocks,
+        )
+
+        valuation_components: List[Tuple[float, pd.Series]] = []
+        self._add_component(valuation_components, 0.28, factors["pe"], self._score_low(factors["pe"]))
+        self._add_component(valuation_components, 0.24, factors["pb"], self._score_low(factors["pb"]))
+        self._add_component(valuation_components, 0.18, factors["ps"], self._score_low(factors["ps"]))
+        self._add_component(valuation_components, 0.15, factors["pcf"], self._score_low(factors["pcf"]))
+        self._add_component(valuation_components, 0.15, factors["peg"], self._score_low(factors["peg"]))
+        factors["valuation_score"] = self._weighted_score(valuation_components, factors.index)
+
+        # ========== 4. 波动率/风险因子（越低越好） ==========
+        factors["downside_volatility"] = self._series(
+            [self._coalesce(stock, price_data, financial_data, "downside_volatility") for stock in stocks],
+            stocks,
+        )
+        factors["max_dd"] = self._series(
+            [self._coalesce(stock, price_data, financial_data, "max_drawdown") for stock in stocks],
+            stocks,
+        )
+        factors["atr_percent"] = self._series(
+            [self._coalesce(stock, price_data, financial_data, "atr_percent") for stock in stocks],
+            stocks,
+        )
+        factors["bb_width"] = self._series(
+            [self._coalesce(stock, price_data, financial_data, "bb_width") for stock in stocks],
+            stocks,
+        )
+        factors["amplitude"] = self._series(
+            [self._number(financial_data.get(stock, {}).get("amplitude")) for stock in stocks],
+            stocks,
+        )
+
+        volatility_components: List[Tuple[float, pd.Series]] = []
+        self._add_component(volatility_components, 0.28, factors["volatility"], self._score_low(factors["volatility"]))
+        self._add_component(volatility_components, 0.22, factors["downside_volatility"], self._score_low(factors["downside_volatility"]))
+        self._add_component(volatility_components, 0.22, factors["max_dd"], self._score_low(factors["max_dd"]))
+        self._add_component(volatility_components, 0.16, factors["atr_percent"], self._score_low(factors["atr_percent"]))
+        self._add_component(volatility_components, 0.08, factors["bb_width"], self._score_low(factors["bb_width"]))
+        self._add_component(volatility_components, 0.04, factors["amplitude"], self._score_low(factors["amplitude"]))
+        factors["volatility_score"] = self._weighted_score(volatility_components, factors.index)
+
+        # ========== 5. 流动性因子 ==========
+        factors["turnover_rate"] = self._series(
+            [
+                self._first_number(
+                    financial_data.get(stock, {}).get("turnover_rate_f"),
+                    financial_data.get(stock, {}).get("turnover_rate"),
+                    price_data.get(stock, {}).get("turnover_rate"),
+                )
+                for stock in stocks
+            ],
+            stocks,
+        )
+        factors["volume_ratio"] = self._series(
+            [self._coalesce(stock, price_data, financial_data, "volume_ratio") for stock in stocks],
+            stocks,
+        )
+        factors["volume_momentum"] = self._series(
+            [self._coalesce(stock, price_data, financial_data, "volume_momentum") for stock in stocks],
+            stocks,
+        )
+        factors["market_cap"] = self._positive_series(
+            [
+                self._first_number(
+                    financial_data.get(stock, {}).get("circ_market_cap"),
+                    financial_data.get(stock, {}).get("market_cap"),
+                )
+                for stock in stocks
+            ],
+            stocks,
+        )
+        factors["amount"] = self._positive_series(
+            [price_data.get(stock, {}).get("amount") for stock in stocks],
+            stocks,
+        )
+
+        liquidity_components: List[Tuple[float, pd.Series]] = []
+        self._add_component(
+            liquidity_components,
+            0.30,
+            factors["turnover_rate"],
+            self._score_high(np.log1p(factors["turnover_rate"].clip(lower=0))),
+        )
+        self._add_component(
+            liquidity_components,
+            0.20,
+            factors["volume_ratio"],
+            self._score_target(factors["volume_ratio"], target=1.5, tolerance=1.2),
+        )
+        self._add_component(
+            liquidity_components,
+            0.15,
+            factors["volume_momentum"],
+            self._score_target(factors["volume_momentum"], target=1.2, tolerance=0.8),
+        )
+        self._add_component(
+            liquidity_components,
+            0.20,
+            factors["market_cap"],
+            self._score_high(np.log1p(factors["market_cap"].clip(lower=0))),
+        )
+        self._add_component(
+            liquidity_components,
+            0.15,
+            factors["amount"],
+            self._score_high(np.log1p(factors["amount"].clip(lower=0))),
+        )
+        factors["liquidity_score"] = self._weighted_score(liquidity_components, factors.index)
+
+        # ========== 6. 质量因子 ==========
+        factors["roe"] = self._series(
+            [self._number(financial_data.get(stock, {}).get("roe")) for stock in stocks],
+            stocks,
+        )
+        factors["gross_margin"] = self._series(
+            [self._number(financial_data.get(stock, {}).get("gross_margin")) for stock in stocks],
+            stocks,
+        )
+        factors["cash_quality"] = self._series(
+            [self._number(financial_data.get(stock, {}).get("cash_flow_to_net_profit")) for stock in stocks],
+            stocks,
+        )
+        factors["quality_data_coverage"] = (
+            factors[["roe", "gross_margin", "net_profit_margin", "cash_quality"]].notna().sum(axis=1) / 4
+        )
+
+        quality_components: List[Tuple[float, pd.Series]] = []
+        self._add_component(quality_components, 0.35, factors["roe"], self._score_high(factors["roe"]))
+        self._add_component(quality_components, 0.25, factors["gross_margin"], self._score_high(factors["gross_margin"]))
+        self._add_component(quality_components, 0.20, factors["net_profit_margin"], self._score_high(factors["net_profit_margin"]))
+        self._add_component(quality_components, 0.20, factors["cash_quality"], self._score_high(factors["cash_quality"]))
+        if quality_components:
+            fundamental_quality = self._weighted_score(quality_components, factors.index)
+            factors["quality_score"] = (
+                0.75 * fundamental_quality
+                + 0.15 * factors["volatility_score"]
+                + 0.10 * factors["liquidity_score"]
             )
         else:
-            factors['valuation_score'] = (
-                0.4 * (1 - self._normalize(factors['pe'])) +
-                0.4 * (1 - self._normalize(factors['pb'])) +
-                0.2 * (1 - self._normalize(factors['peg']))
+            factors["quality_score"] = (
+                0.45 * factors["valuation_score"]
+                + 0.35 * factors["volatility_score"]
+                + 0.20 * factors["liquidity_score"]
             )
-        
-        # 4. 波动率因子得分（波动率越低得分越高）- 先计算，因为质量因子可能需要用到
-        factors['volatility'] = [price_data[s].get('volatility', 0.3) for s in stocks]
-        factors['max_dd'] = [price_data[s].get('max_drawdown', 20) for s in stocks]
-        factors['atr_percent'] = [price_data[s].get('atr_percent', 0) for s in stocks]
-        factors['bb_width'] = [price_data[s].get('bb_width', 0) for s in stocks]
-        
-        # 如果有振幅数据，也加入波动率计算
-        amplitude_values = [financial_data[s].get('amplitude') if financial_data[s].get('amplitude') is not None else 0 for s in stocks]
-        
-        # 增强波动率得分：结合波动率、最大回撤、ATR、布林带宽度、振幅
-        volatility_components = []
-        weights = []
-        
-        volatility_components.append(1 - self._normalize(factors['volatility']))
-        weights.append(0.25)
-        
-        volatility_components.append(1 - self._normalize(factors['max_dd']))
-        weights.append(0.25)
-        
-        if any(x > 0 for x in factors['atr_percent']):
-            volatility_components.append(1 - self._normalize(factors['atr_percent']))
-            weights.append(0.15)
-        
-        if any(x > 0 for x in factors['bb_width']):
-            volatility_components.append(1 - self._normalize(factors['bb_width']))
-            weights.append(0.15)
-        
-        if any(x > 0 for x in amplitude_values):
-            factors['amplitude'] = amplitude_values
-            volatility_components.append(1 - self._normalize(factors['amplitude']))
-            weights.append(0.2)
-        else:
-            weights = [w * (1.0 / sum(weights)) for w in weights]  # 归一化权重
-        
-        factors['volatility_score'] = sum(w * comp for w, comp in zip(weights, volatility_components))
-        
-        # 5. 质量因子得分
-        # 如果财务质量数据不可用，使用技术指标作为代理
-        roe_values = [financial_data[s].get('roe') for s in stocks]
-        gross_margin_values = [financial_data[s].get('gross_margin') for s in stocks]
-        cash_quality_values = [financial_data[s].get('cash_flow_to_net_profit') for s in stocks]
-        
-        factors['roe'] = roe_values
-        factors['gross_margin'] = gross_margin_values
-        factors['cash_quality'] = cash_quality_values
-        
-        # 如果质量数据都不可用，使用估值和波动率的组合作为代理
-        if all(x is None or x == 0 for x in roe_values) and all(x is None or x == 0 for x in gross_margin_values):
-            # 使用低估值和低波动率作为质量代理
-            factors['quality_score'] = (
-                0.6 * factors['valuation_score'] +
-                0.4 * factors['volatility_score']
-            )
-        else:
-            # 只使用有数据的因子
-            quality_components = []
-            weights = []
-            if any(x is not None and x != 0 for x in roe_values):
-                # 将None值替换为0用于计算
-                roe_series = pd.Series([x if x is not None else 0 for x in roe_values], index=stocks)
-                factors['roe'] = roe_series
-                quality_components.append(self._normalize(roe_series))
-                weights.append(0.4)
-            if any(x is not None and x != 0 for x in gross_margin_values):
-                gross_margin_series = pd.Series([x if x is not None else 0 for x in gross_margin_values], index=stocks)
-                factors['gross_margin'] = gross_margin_series
-                quality_components.append(self._normalize(gross_margin_series))
-                weights.append(0.3)
-            if any(x is not None and x != 0 for x in cash_quality_values):
-                cash_quality_series = pd.Series([x if x is not None else 0 for x in cash_quality_values], index=stocks)
-                factors['cash_quality'] = cash_quality_series
-                quality_components.append(self._normalize(cash_quality_series))
-                weights.append(0.3)
-            
-            if quality_components:
-                # 归一化权重
-                total_weight = sum(weights)
-                weights = [w / total_weight for w in weights]
-                factors['quality_score'] = sum(w * comp for w, comp in zip(weights, quality_components))
-            else:
-                factors['quality_score'] = pd.Series([50] * len(stocks), index=stocks)
-        
+
+        for column in self.SCORE_COLUMNS:
+            if column in factors.columns:
+                factors[column] = factors[column].fillna(50).clip(0, 100)
+
         self.factors = factors
         return factors
-    
+
     def _normalize(self, series: pd.Series) -> pd.Series:
         """
-        Z-score标准化
-        
-        Args:
-            series: 待标准化的Series
-            
-        Returns:
-            标准化后的Series，范围0-100
+        兼容旧接口：高值高分的稳健横截面百分位得分。
         """
-        mean = series.mean()
-        std = series.std()
-        
-        if std == 0:
-            return pd.Series([50] * len(series), index=series.index)
-        
-        normalized = (series - mean) / std * 10 + 50
-        return normalized.clip(0, 100)
-    
-    def apply_industry_adjustment(self, 
-                                  factors: pd.DataFrame,
-                                  stock_info: pd.DataFrame) -> pd.DataFrame:
+        return self._score_high(series)
+
+    def apply_industry_adjustment(
+        self,
+        factors: pd.DataFrame,
+        stock_info: pd.DataFrame,
+    ) -> pd.DataFrame:
         """
-        应用行业调整系数
-        
-        Args:
-            factors: 因子得分DataFrame
-            stock_info: 股票信息DataFrame
-            
-        Returns:
-            调整后的因子得分
+        应用行业调整系数。
         """
         adjusted = factors.copy()
-        
+
         for idx in adjusted.index:
-            sector = stock_info.loc[idx, 'sector'] if idx in stock_info.index else None
-            
+            sector = stock_info.loc[idx, "sector"] if idx in stock_info.index else None
+
             if sector in INDUSTRY_ADJUSTMENT:
                 adj = INDUSTRY_ADJUSTMENT[sector]
-                for factor in ['valuation', 'growth', 'quality']:
-                    if factor + '_score' in adjusted.columns:
-                        adjusted.loc[idx, factor + '_score'] *= adj.get(factor, 1.0)
-        
-        # 重新标准化
-        for col in ['valuation_score', 'growth_score', 'quality_score']:
-            if col in adjusted.columns:
-                adjusted[col] = self._normalize(adjusted[col])
-        
+                for factor in ["valuation", "growth", "quality"]:
+                    column = factor + "_score"
+                    if column in adjusted.columns:
+                        adjusted.loc[idx, column] *= adj.get(factor, 1.0)
+
+        for column in self.SCORE_COLUMNS:
+            if column in adjusted.columns:
+                adjusted[column] = adjusted[column].clip(0, 100)
+
         return adjusted
-    
+
     def calculate_composite_score(self, factors: pd.DataFrame) -> pd.Series:
         """
-        计算综合得分
-        
-        Args:
-            factors: 因子得分DataFrame
-            
-        Returns:
-            综合得分Series
+        计算综合得分。
         """
         from .config import FACTOR_WEIGHTS
-        
-        composite = (
-            FACTOR_WEIGHTS['momentum'] * factors['momentum_score'] +
-            FACTOR_WEIGHTS['growth'] * factors['growth_score'] +
-            FACTOR_WEIGHTS['valuation'] * factors['valuation_score'] +
-            FACTOR_WEIGHTS['quality'] * factors['quality_score'] +
-            FACTOR_WEIGHTS['volatility'] * factors['volatility_score']
-        )
-        
+
+        weighted_columns = [
+            (factor_name, weight, f"{factor_name}_score")
+            for factor_name, weight in FACTOR_WEIGHTS.items()
+            if f"{factor_name}_score" in factors.columns and weight > 0
+        ]
+        if not weighted_columns:
+            return pd.Series(50.0, index=factors.index)
+
+        total_weight = sum(weight for _, weight, _ in weighted_columns)
+        composite = pd.Series(0.0, index=factors.index)
+        for _, weight, column in weighted_columns:
+            composite += (weight / total_weight) * factors[column].fillna(50)
+
         return composite.clip(0, 100)
+
+    def _coalesce(
+        self,
+        stock: str,
+        price_data: Dict[str, Dict],
+        financial_data: Dict[str, Dict],
+        key: str,
+        default: float = np.nan,
+    ) -> float:
+        return self._first_number(
+            financial_data.get(stock, {}).get(key),
+            price_data.get(stock, {}).get(key),
+            default=default,
+        )
+
+    @staticmethod
+    def _first_number(*values, default: float = np.nan) -> float:
+        for value in values:
+            number = FactorCalculator._number(value)
+            if pd.notna(number):
+                return number
+        return default
+
+    @staticmethod
+    def _number(value) -> float:
+        if value is None:
+            return np.nan
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return np.nan
+        return number if np.isfinite(number) else np.nan
+
+    @staticmethod
+    def _series(values, index) -> pd.Series:
+        return pd.Series(values, index=index, dtype="float64").replace([np.inf, -np.inf], np.nan)
+
+    def _positive_series(self, values, index) -> pd.Series:
+        series = self._series(values, index)
+        return series.where(series > 0)
+
+    @staticmethod
+    def _pct_distance(value, base) -> float:
+        value = FactorCalculator._number(value)
+        base = FactorCalculator._number(base)
+        if pd.isna(value) or pd.isna(base) or base == 0:
+            return np.nan
+        return (value / base - 1) * 100
+
+    def _estimate_peg(self, stock: str, financial_data: Dict[str, Dict], factors: pd.DataFrame) -> float:
+        peg = self._number(financial_data.get(stock, {}).get("peg"))
+        if pd.isna(peg):
+            pe = factors.loc[stock, "pe"] if "pe" in factors.columns else np.nan
+            profit_growth = factors.loc[stock, "profit_growth"] if "profit_growth" in factors.columns else np.nan
+            if pd.notna(pe) and pd.notna(profit_growth) and profit_growth > 0:
+                peg = pe / profit_growth
+        if pd.isna(peg) or peg <= 0 or peg > 10:
+            return np.nan
+        return float(peg)
+
+    def _add_component(
+        self,
+        components: List[Tuple[float, pd.Series]],
+        weight: float,
+        raw: pd.Series,
+        score: pd.Series,
+    ) -> None:
+        if self._has_signal(raw):
+            components.append((weight, score))
+
+    @staticmethod
+    def _has_signal(series: pd.Series) -> bool:
+        cleaned = pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+        return len(cleaned) >= 2 and cleaned.nunique() > 1
+
+    @staticmethod
+    def _neutral(index) -> pd.Series:
+        return pd.Series(50.0, index=index)
+
+    def _score_high(self, series: pd.Series) -> pd.Series:
+        values = pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan)
+        score = self._neutral(values.index)
+        valid = values.dropna()
+        if len(valid) < 2 or valid.nunique() <= 1:
+            return score
+        score.loc[valid.index] = valid.rank(pct=True, method="average") * 100
+        return score.clip(0, 100)
+
+    def _score_low(self, series: pd.Series) -> pd.Series:
+        return (100 - self._score_high(series)).clip(0, 100)
+
+    def _score_target(self, series: pd.Series, target: float, tolerance: float) -> pd.Series:
+        values = pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan)
+        score = self._neutral(values.index)
+        if tolerance <= 0:
+            return score
+        valid = values.dropna()
+        distance = (valid - target).abs() / tolerance
+        score.loc[valid.index] = (100 - distance * 50).clip(0, 100)
+        return score
+
+    def _weighted_score(
+        self,
+        components: List[Tuple[float, pd.Series]],
+        index,
+    ) -> pd.Series:
+        if not components:
+            return self._neutral(index)
+
+        total_weight = sum(weight for weight, _ in components)
+        if total_weight <= 0:
+            return self._neutral(index)
+
+        score = pd.Series(0.0, index=index)
+        for weight, component in components:
+            score += (weight / total_weight) * component.reindex(index).fillna(50)
+        return score.clip(0, 100)
