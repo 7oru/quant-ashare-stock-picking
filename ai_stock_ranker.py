@@ -22,6 +22,7 @@ import sys
 import os
 import pandas as pd
 import logging
+from pathlib import Path
 
 # Configure logging
 logging.basicConfig(
@@ -41,7 +42,7 @@ def main():
     parser.add_argument('--csv', type=str, default='ai_stock_pool.csv',
                        help='股票池CSV文件路径')
     parser.add_argument('--output', type=str, default=None,
-                       help='输出文件路径 (默认: results/ranking_result_yyyymmdd_hhmmss.csv)')
+                       help='输出文件路径 (默认: results/<timestamp>/ranking_result.csv)')
     parser.add_argument('--capital', type=float, default=100.0,
                        help='总资金（亿元）')
     parser.add_argument('--lookback-days', type=int, default=240,
@@ -67,8 +68,14 @@ def main():
         stock_info = pd.read_csv(args.csv, index_col='stock_code')
         report = ranker.generate_report(ranking, allocation, stock_info)
         print(report)
+        if ranker.last_output_dir is not None:
+            report_path = Path(ranker.last_output_dir) / 'analysis_report.txt'
+            report_path.write_text(report, encoding='utf-8')
+            print(f"\n报告已保存: {report_path}")
     
     print(f"\n排序完成！")
+    if ranker.last_output_dir is not None:
+        print(f"输出目录: {ranker.last_output_dir}")
     print(f"Top 5 股票: {list(ranking.head(5).index)}")
     print(f"建议核心配置权重: {allocation[allocation['recommendation']=='核心配置']['target_weight'].sum()*100:.1f}%")
 

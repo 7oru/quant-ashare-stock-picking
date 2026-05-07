@@ -131,14 +131,14 @@ python ai_stock_ranker.py
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
 | `--csv` | 股票池CSV文件路径 | `ai_stock_pool.csv` |
-| `--output` | 输出文件路径 | `results/ranking_result_yyyymmdd_HHMMSS.csv` |
+| `--output` | 输出文件路径 | `results/<timestamp>/ranking_result.csv` |
 | `--capital` | 总投资资金（亿元） | `100.0` |
 | `--lookback-days` | 历史价格回溯天数 | `240` |
 | `--report` | 生成详细分析报告 | `False` |
 
 #### 3. 使用示例
 ```bash
-# 使用默认配置（输入: ai_stock_pool.csv, 输出: results/ranking_result_*.csv）
+# 使用默认配置（输入: ai_stock_pool.csv, 输出: results/<timestamp>/）
 python ai_stock_ranker.py
 
 # 自定义股票池
@@ -150,7 +150,7 @@ python ai_stock_ranker.py --output /path/to/result.csv
 # 生成详细报告
 python ai_stock_ranker.py --report
 
-# 完整参数示例
+# 完整参数示例；指定 --output 时不再自动创建 timestamp 子目录
 python ai_stock_ranker.py \
     --csv ai_stock_pool.csv \
     --output results/my_result.csv \
@@ -161,7 +161,7 @@ python ai_stock_ranker.py \
 
 #### 4. 回测Pipeline
 ```bash
-# 月度调仓回测，输出summary/equity/rebalances三个CSV
+# 月度调仓回测，输出到 results/<timestamp>/
 python backtest_pipeline.py \
     --csv ai_stock_pool.csv \
     --start 2024-01-01 \
@@ -177,7 +177,12 @@ python backtest_pipeline.py \
 ## 📈 输出结果说明
 
 ### 输出文件
-结果保存至 `results/ranking_result_yyyymmdd_HHMMSS.csv`，包含以下字段：
+默认每次运行都会创建 `results/<timestamp>/`，其中：
+- `ranking_result.csv`: 排名、因子得分、推荐评级和目标仓位
+- `ranking_scores.csv`: 不含仓位优化的纯排名得分
+- `analysis_report.txt`: 使用 `--report` 时生成的文本报告
+
+`ranking_result.csv` 包含以下字段：
 
 | 字段名 | 说明 |
 |--------|------|
@@ -203,9 +208,10 @@ python backtest_pipeline.py \
 
 ### 回测输出
 `backtest_pipeline.py` 会保存：
-- `backtest_summary_*.csv`: 总收益、年化收益、年化波动、Sharpe、最大回撤、胜率、换手
-- `backtest_equity_*.csv`: 每日策略净值、基准净值、现金权重、回撤
-- `backtest_rebalances_*.csv`: 每次调仓的入选股票、权重、排名和因子得分
+- `backtest_config.csv`: 回测参数
+- `backtest_summary.csv`: 总收益、年化收益、年化波动、Sharpe、最大回撤、胜率、换手
+- `backtest_equity.csv`: 每日策略净值、基准净值、现金权重、回撤
+- `backtest_rebalances.csv`: 每次调仓的入选股票、权重、排名和因子得分
 
 ## 📋 投资策略建议
 

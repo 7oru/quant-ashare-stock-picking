@@ -7,10 +7,10 @@ Stock Ranking Module
 
 import pandas as pd
 import logging
-import os
 import sys
 from typing import Tuple
 from datetime import datetime
+from pathlib import Path
 
 # Use print for progress updates
 def log(msg):
@@ -20,6 +20,7 @@ def log(msg):
 from .data_fetcher import StockDataFetcher
 from .factor_calculator import FactorCalculator
 from .portfolio_optimizer import PortfolioOptimizer
+from .results_manager import create_timestamped_result_dir
 
 
 class StockRanker:
@@ -32,6 +33,8 @@ class StockRanker:
         self.data_fetcher = StockDataFetcher()
         self.factor_calculator = FactorCalculator()
         self.portfolio_optimizer = PortfolioOptimizer()
+        self.last_output_dir = None
+        self.last_output_path = None
         
     def rank_stocks(self,
                    csv_path: str,
@@ -44,7 +47,7 @@ class StockRanker:
         Args:
             csv_path: 股票池CSV文件路径
             total_capital: 总资金
-            output_path: 输出文件路径 (默认: results/ranking_result_yyyymmdd_hhmmss.csv)
+            output_path: 输出文件路径 (默认: results/<timestamp>/ranking_result.csv)
             lookback_days: 历史价格回溯天数
             
         Returns:
@@ -52,11 +55,16 @@ class StockRanker:
         """
         log(f"开始股票排序分析: {csv_path}")
         
-        # 生成带时间戳的默认输出路径
+        # 生成带时间戳的默认输出目录
         if output_path is None:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            os.makedirs('results', exist_ok=True)
-            output_path = f"results/ranking_result_{timestamp}.csv"
+            output_dir = create_timestamped_result_dir("results")
+            output_path = output_dir / "ranking_result.csv"
+        else:
+            output_path = Path(output_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_dir = output_path.parent
+        self.last_output_dir = output_dir
+        self.last_output_path = output_path
         
         # 1. 加载股票池
         stock_info = pd.read_csv(csv_path, index_col='stock_code')
@@ -121,6 +129,9 @@ class StockRanker:
         # 8. 输出结果
         log(f"保存结果到: {output_path}")
         allocation.to_csv(output_path)
+        ranking_scores_path = output_dir / "ranking_scores.csv"
+        ranking.to_csv(ranking_scores_path)
+        log(f"保存排名得分到: {ranking_scores_path}")
         
         # 汇总信息
         top_stock = ranking.iloc[0]

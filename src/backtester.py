@@ -5,9 +5,8 @@ Backtest pipeline for the multi-factor stock picker
 
 from __future__ import annotations
 
-import os
 import sys
-from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -16,6 +15,7 @@ import pandas as pd
 from .config import POSITION_LIMITS
 from .factor_calculator import FactorCalculator
 from .market_features import calculate_price_features
+from .results_manager import create_timestamped_result_dir
 
 
 def log(msg):
@@ -157,12 +157,23 @@ class BacktestPipeline:
         rebalances = pd.DataFrame(rebalance_records)
         summary = self._summary(equity_curve, initial_capital, len(rebalance_dates))
 
-        paths = self._save_outputs(summary, equity_curve, rebalances, output_dir)
+        run_config = {
+            "csv_path": csv_path,
+            "start_date": start_date,
+            "end_date": end_date,
+            "initial_capital": initial_capital,
+            "rebalance": rebalance,
+            "lookback_days": lookback_days,
+            "top_n": top_n,
+            "fee_bps": fee_bps,
+        }
+        paths = self._save_outputs(summary, equity_curve, rebalances, output_dir, run_config)
         return {
             "summary": summary,
             "equity_curve": equity_curve,
             "rebalances": rebalances,
             "paths": paths,
+            "output_dir": str(Path(paths["summary"]).parent),
         }
 
     def _fetch_histories(
@@ -409,14 +420,16 @@ class BacktestPipeline:
         equity_curve: pd.DataFrame,
         rebalances: pd.DataFrame,
         output_dir: str,
+        run_config: Dict[str, object],
     ) -> Dict[str, str]:
-        os.makedirs(output_dir, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = create_timestamped_result_dir(output_dir)
         paths = {
-            "summary": os.path.join(output_dir, f"backtest_summary_{timestamp}.csv"),
-            "equity": os.path.join(output_dir, f"backtest_equity_{timestamp}.csv"),
-            "rebalances": os.path.join(output_dir, f"backtest_rebalances_{timestamp}.csv"),
+            "config": str(run_dir / "backtest_config.csv"),
+            "summary": str(run_dir / "backtest_summary.csv"),
+            "equity": str(run_dir / "backtest_equity.csv"),
+            "rebalances": str(run_dir / "backtest_rebalances.csv"),
         }
+        pd.DataFrame([run_config]).to_csv(paths["config"], index=False)
         summary.to_csv(paths["summary"], index=False)
         equity_curve.to_csv(paths["equity"])
         rebalances.to_csv(paths["rebalances"], index=False)

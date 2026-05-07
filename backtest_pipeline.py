@@ -30,7 +30,7 @@ def main():
     parser.add_argument("--lookback-days", type=int, default=180, help="每次调仓使用的历史交易日窗口")
     parser.add_argument("--top-n", type=int, default=10, help="每次持仓股票数量")
     parser.add_argument("--fee-bps", type=float, default=10.0, help="单边交易成本, bps")
-    parser.add_argument("--output-dir", type=str, default="results", help="结果输出目录")
+    parser.add_argument("--output-dir", type=str, default="results", help="基础输出目录，每次运行会创建 <timestamp> 子目录")
     args = parser.parse_args()
 
     pipeline = BacktestPipeline()
@@ -48,6 +48,7 @@ def main():
 
     print("\n回测完成")
     print(result["summary"].to_string(index=False, float_format=lambda value: f"{value:.4f}"))
+    print(f"\n输出目录: {result['output_dir']}")
     print("\n输出文件:")
     for name, path in result["paths"].items():
         print(f"- {name}: {path}")
