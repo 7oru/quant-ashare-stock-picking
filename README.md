@@ -182,6 +182,7 @@ export QUANT_ASHARE_CACHE_DIR=/tmp/my_quant_cache
 ├── ai_stock_ranker.py           # 选股 CLI
 ├── backtest_pipeline.py         # 回测 CLI
 ├── ai_stock_pool.csv            # 当前股票池
+├── scripts/                     # 数据源探索脚本
 ├── src/
 │   ├── backtester.py            # 回测流程
 │   ├── config.py                # 因子权重、行业调整、仓位限制
@@ -192,13 +193,14 @@ export QUANT_ASHARE_CACHE_DIR=/tmp/my_quant_cache
 │   ├── portfolio_optimizer.py   # 仓位分配
 │   ├── results_manager.py       # 时间戳输出目录
 │   └── stock_ranker.py          # 选股流程协调
+├── docs/legacy/                 # 历史分析文档
 └── results/                     # 运行结果
 ```
 
 辅助脚本：
 
-- `explore_akshare_data.py`: 探索 AkShare 可用数据源。
-- `explore_akshare_financial.py`: 探索财务相关接口。
+- `scripts/explore_akshare_data.py`: 探索 AkShare 可用数据源。
+- `scripts/explore_akshare_financial.py`: 探索财务相关接口。
 
 ## 数据来源
 
