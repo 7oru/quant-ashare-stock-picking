@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from .config import POSITION_LIMITS
+from .data_cache import TmpDataCache
 from .factor_calculator import FactorCalculator
 from .market_features import calculate_price_features
 from .results_manager import create_timestamped_result_dir
@@ -31,6 +32,7 @@ class BacktestPipeline:
     def __init__(self):
         self.factor_calculator = FactorCalculator()
         self.position_limits = POSITION_LIMITS
+        self.data_cache = TmpDataCache()
 
     def run(
         self,
@@ -196,9 +198,9 @@ class BacktestPipeline:
             symbol = code.replace(".SZ", "").replace(".SH", "")
             log(f"[{i}/{total}] 获取回测历史: {code}")
             try:
-                df = ak.stock_zh_a_hist(
+                df = self._get_hist_dataframe(
+                    ak,
                     symbol=symbol,
-                    period="daily",
                     start_date=fetch_start.strftime("%Y%m%d"),
                     end_date=end.strftime("%Y%m%d"),
                     adjust="qfq",
@@ -218,6 +220,41 @@ class BacktestPipeline:
 
         log(f"历史行情获取完成: {len(histories)}/{total} 只")
         return histories
+
+    def _get_hist_dataframe(
+        self,
+        ak,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        adjust: str,
+    ) -> pd.DataFrame:
+        key = {
+            "api": "stock_zh_a_hist",
+            "symbol": symbol,
+            "period": "daily",
+            "start_date": start_date,
+            "end_date": end_date,
+            "adjust": adjust,
+        }
+
+        def fetch():
+            return ak.stock_zh_a_hist(
+                symbol=symbol,
+                period="daily",
+                start_date=start_date,
+                end_date=end_date,
+                adjust=adjust,
+            )
+
+        hist_df, cache_hit, cache_path = self.data_cache.get_or_fetch_dataframe(
+            "hist",
+            key,
+            fetch,
+        )
+        if cache_hit:
+            log(f"  使用缓存回测日线: {symbol} ({cache_path})")
+        return hist_df.copy()
 
     @staticmethod
     def _build_calendar(

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List
 import sys
 
+from .data_cache import TmpDataCache
 from .market_features import calculate_price_features
 
 # Use print for progress updates
@@ -30,6 +31,7 @@ class StockDataFetcher:
         使用akshare获取真实市场数据
         """
         self.cache = {}
+        self.data_cache = TmpDataCache()
         
     def get_price_data(self, stock_codes: List[str],
                        lookback_days: int = 240) -> Dict[str, Dict]:
@@ -62,7 +64,7 @@ class StockDataFetcher:
             import akshare as ak
             
             log(f"获取实时行情数据...")
-            spot_df = ak.stock_zh_a_spot_em()
+            spot_df = self._get_spot_dataframe(ak)
             spot_df = spot_df.set_index('代码')
             
             spot_data = {}
@@ -107,13 +109,14 @@ class StockDataFetcher:
                 ts_code = code.replace('.SZ', '').replace('.SH', '')
                 
                 try:
-                    # 获取日线数据
-                    df = ak.stock_zh_a_hist(
+                    start_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y%m%d')
+                    end_date = datetime.now().strftime('%Y%m%d')
+                    df = self._get_hist_dataframe(
+                        ak,
                         symbol=ts_code,
-                        period="daily",
-                        start_date=(datetime.now() - timedelta(days=lookback_days)).strftime('%Y%m%d'),
-                        end_date=datetime.now().strftime('%Y%m%d'),
-                        adjust="qfq"
+                        start_date=start_date,
+                        end_date=end_date,
+                        adjust="qfq",
                     )
                     
                     if df is None or len(df) == 0:
@@ -166,7 +169,7 @@ class StockDataFetcher:
             import akshare as ak
 
             log(f"获取实时行情数据...")
-            spot_df = ak.stock_zh_a_spot_em()
+            spot_df = self._get_spot_dataframe(ak)
             spot_df = spot_df.set_index('代码')
             log(f"实时行情数据获取完成，共 {len(spot_df)} 只股票")
 
@@ -372,3 +375,49 @@ class StockDataFetcher:
         except ValueError as e:
             log(f"错误: {str(e)}")
             raise RuntimeError(str(e))
+
+    def _get_spot_dataframe(self, ak) -> pd.DataFrame:
+        key = {"api": "stock_zh_a_spot_em"}
+        spot_df, cache_hit, cache_path = self.data_cache.get_or_fetch_dataframe(
+            "spot",
+            key,
+            ak.stock_zh_a_spot_em,
+        )
+        if cache_hit:
+            log(f"使用缓存实时行情数据: {cache_path}")
+        return spot_df.copy()
+
+    def _get_hist_dataframe(
+        self,
+        ak,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        adjust: str,
+    ) -> pd.DataFrame:
+        key = {
+            "api": "stock_zh_a_hist",
+            "symbol": symbol,
+            "period": "daily",
+            "start_date": start_date,
+            "end_date": end_date,
+            "adjust": adjust,
+        }
+
+        def fetch():
+            return ak.stock_zh_a_hist(
+                symbol=symbol,
+                period="daily",
+                start_date=start_date,
+                end_date=end_date,
+                adjust=adjust,
+            )
+
+        hist_df, cache_hit, cache_path = self.data_cache.get_or_fetch_dataframe(
+            "hist",
+            key,
+            fetch,
+        )
+        if cache_hit:
+            log(f"  使用缓存日线: {symbol} ({cache_path})")
+        return hist_df.copy()
