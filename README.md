@@ -260,6 +260,8 @@ python ai_stock_ranker.py --help
 python backtest_pipeline.py --help
 ```
 
+后续专业化模块清单见 [docs/todo.md](docs/todo.md)。
+
 ## 重要限制
 
 - 这不是交易系统，没有下单、风控执行或实时监控能力。
