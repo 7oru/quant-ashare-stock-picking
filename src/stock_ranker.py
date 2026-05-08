@@ -20,7 +20,7 @@ def log(msg):
 from .data_fetcher import StockDataFetcher
 from .factor_calculator import FactorCalculator
 from .portfolio_optimizer import PortfolioOptimizer
-from .results_manager import create_timestamped_result_dir
+from .results_manager import create_timestamped_result_dir, describe_stock_pool
 
 
 class StockRanker:
@@ -70,6 +70,16 @@ class StockRanker:
         stock_info = pd.read_csv(csv_path, index_col='stock_code')
         stock_codes = stock_info.index.tolist()
         log(f"加载股票数量: {len(stock_codes)}")
+        run_config = {
+            "run_type": "ranking",
+            "total_capital": total_capital,
+            "lookback_days": lookback_days,
+            "output_path": str(output_path),
+            **describe_stock_pool(csv_path, stock_info),
+        }
+        ranking_config_path = output_dir / "ranking_config.csv"
+        pd.DataFrame([run_config]).to_csv(ranking_config_path, index=False)
+        log(f"保存运行配置到: {ranking_config_path}")
         
         # 2. 获取数据
         log("获取股票数据...")

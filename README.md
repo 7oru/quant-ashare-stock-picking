@@ -45,6 +45,7 @@ python backtest_pipeline.py \
 ```text
 results/
 └── 20260507_213544/
+    ├── ranking_config.csv
     ├── ranking_result.csv
     ├── ranking_scores.csv
     └── analysis_report.txt
@@ -83,10 +84,32 @@ skills/ai-upstream-stock-research/
 skills/ai-upstream-stock-research/references/csv-schema.md
 ```
 
+每次扩池前先生成研究证据账本：
+
+```bash
+python scripts/create_research_ledger.py \
+  --title "AI upstream research" \
+  --news-window-start 2026-05-02 \
+  --news-window-end 2026-05-08
+```
+
+默认会写到：
+
+```text
+research_ledgers/
+└── 20260508_112233/
+    ├── ledger.json       # canonical 结构化证据
+    ├── candidates.csv    # 候选股票索引
+    ├── sources.csv       # 来源和 claim 索引
+    └── notes.md
+```
+
+`research_ledgers/` 是本地产物目录，默认不提交到 git。`ledger.json` 会记录新闻窗口、候选股票、供应链路径、证据摘要、来源 URL、置信度、淘汰原因，以及当次 `ai_stock_pool.csv` 的 SHA-256。
+
 当前推荐的研究 loop 是：
 
 ```text
-LLM 新闻/供应链研究 -> 更新 ai_stock_pool.csv -> 多因子排名 -> 回测验证 -> 复盘结果和股票池
+LLM 新闻/供应链研究 -> 证据账本 -> 更新 ai_stock_pool.csv -> 多因子排名 -> 回测验证 -> 复盘结果和股票池
 ```
 
 ## 选股入口
@@ -113,6 +136,7 @@ python ai_stock_ranker.py \
 
 - `ranking_result.csv`: 排名、因子分数、推荐评级、目标仓位和仓位金额。
 - `ranking_scores.csv`: 只包含排名和因子分数，不含仓位优化结果。
+- `ranking_config.csv`: 运行参数和股票池 SHA-256。
 - `analysis_report.txt`: 使用 `--report` 时生成。
 
 ## 回测入口
@@ -215,6 +239,7 @@ export QUANT_SPOT_TIMEOUT_SECONDS=60
 ├── ai_stock_ranker.py           # 选股 CLI
 ├── backtest_pipeline.py         # 回测 CLI
 ├── ai_stock_pool.csv            # 当前股票池
+├── research_ledgers/            # LLM 研究证据账本，本地生成内容默认 ignored
 ├── skills/                      # repo-local Codex skills
 ├── scripts/                     # 数据源探索脚本
 ├── src/
@@ -235,6 +260,7 @@ export QUANT_SPOT_TIMEOUT_SECONDS=60
 
 - `scripts/explore_akshare_data.py`: 探索 AkShare 可用数据源。
 - `scripts/explore_akshare_financial.py`: 探索财务相关接口。
+- `scripts/create_research_ledger.py`: 创建 LLM 扩池证据账本。
 
 ## 数据来源
 

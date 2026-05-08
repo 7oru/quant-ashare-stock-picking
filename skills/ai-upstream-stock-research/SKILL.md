@@ -39,15 +39,18 @@ This skill is research support only. It does not produce investment advice and s
    - Pool fit: diversify across sub-sectors and avoid overloading one narrow trade.
 
 5. Update the stock pool.
+   - Before changing `ai_stock_pool.csv`, create a research ledger folder with `scripts/create_research_ledger.py`.
+   - Use `ledger.json` as the canonical evidence record; use `candidates.csv` and `sources.csv` for quick checks.
    - Preserve the exact CSV schema from `references/csv-schema.md`.
    - Keep CSV fields comma-safe by using Chinese punctuation inside text fields.
    - Add concise `recommended_logic` text that explains the supply-chain path and the AI relevance.
-   - Do not include source URLs inside CSV fields; summarize sources in the final response or a separate note.
+   - Do not include source URLs inside CSV fields; keep them in the research ledger and summarize key sources in the final response.
 
 6. Verify after editing.
    - Check the CSV loads cleanly.
    - Check there are no duplicate `stock_code` values.
    - If sector names are new, add matching entries to `src/config.py` industry adjustments when useful.
+   - Confirm the ledger folder path is included in the final response.
    - Run the repo's lightweight validation command before committing.
 
 ## Output Standard
@@ -62,3 +65,4 @@ Then separately include the exact CSV rows if the user wants to review them.
 ## References
 
 - `references/csv-schema.md`: required `ai_stock_pool.csv` schema and field conventions.
+- `scripts/create_research_ledger.py`: creates folder-based evidence ledgers under `research_ledgers/<timestamp>/`.

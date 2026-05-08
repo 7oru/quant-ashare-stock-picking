@@ -6,5 +6,19 @@ __pycache__/
 .venv/
 venv/
 
+# Local generated artifacts
 results/*
 !results/.gitkeep
+research_ledgers/*
+!research_ledgers/.gitkeep
+
+# Local reconciliation and sample/training data
+reconciliation/
+reconciliations/
+account_reconciliation/
+对账/
+sample_data/
+sample-data/
+sample_runs/
+samples/
+training_data/

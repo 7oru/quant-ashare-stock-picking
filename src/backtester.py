@@ -16,7 +16,7 @@ from .config import POSITION_LIMITS
 from .data_cache import TmpDataCache
 from .factor_calculator import FactorCalculator
 from .market_features import calculate_price_features
-from .results_manager import create_timestamped_result_dir
+from .results_manager import create_timestamped_result_dir, describe_stock_pool
 
 
 def log(msg):
@@ -50,6 +50,7 @@ class BacktestPipeline:
         运行回测并保存结果。
         """
         stock_info = pd.read_csv(csv_path, index_col="stock_code", encoding="utf-8-sig")
+        stock_pool_metadata = describe_stock_pool(csv_path, stock_info)
         stock_codes = stock_info.index.tolist()
         start = pd.Timestamp(start_date)
         end = pd.Timestamp(end_date)
@@ -168,6 +169,7 @@ class BacktestPipeline:
             "lookback_days": lookback_days,
             "top_n": top_n,
             "fee_bps": fee_bps,
+            **stock_pool_metadata,
         }
         paths = self._save_outputs(summary, equity_curve, rebalances, output_dir, run_config)
         return {

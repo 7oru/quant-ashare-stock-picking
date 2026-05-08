@@ -4,10 +4,10 @@
 
 ## P0: Research Evidence Ledger
 
-- [ ] 为每次 LLM 扩池生成研究证据账本，保存到 `results/<timestamp>/research_ledger.csv` 或同级 JSON。
-- [ ] 记录候选股票、新闻窗口、来源 URL、来源日期、供应链路径、证据摘要、置信度、淘汰原因。
-- [ ] 在股票池 CSV 之外保留来源证据，避免把长文本和 URL 混进 `ai_stock_pool.csv`。
-- [ ] 让 ranking/backtest 输出记录本次使用的股票池版本或 hash，便于复盘。
+- [x] 为每次 LLM 扩池生成研究证据账本，保存到 `research_ledgers/<timestamp>/`。
+- [x] 记录候选股票、新闻窗口、来源 URL、来源日期、供应链路径、证据摘要、置信度、淘汰原因。
+- [x] 在股票池 CSV 之外保留来源证据，避免把长文本和 URL 混进 `ai_stock_pool.csv`。
+- [x] 让 ranking/backtest 输出记录本次使用的股票池版本或 hash，便于复盘。
 
 ## P0: Point-in-Time Discipline
 
