@@ -11,7 +11,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.research_ledger import create_research_ledger, load_candidates_json
+from src.research_ledger import candidates_from_stock_pool, create_research_ledger, load_candidates_json
 
 
 def main() -> None:
@@ -28,9 +28,26 @@ def main() -> None:
         default=None,
         help="Optional JSON file containing candidates or an object with a candidates list",
     )
+    parser.add_argument(
+        "--empty",
+        action="store_true",
+        help="Create an empty scaffold ledger instead of defaulting to a stock-pool snapshot",
+    )
     args = parser.parse_args()
 
-    payload = load_candidates_json(args.candidates_json) if args.candidates_json else {"candidates": []}
+    if args.candidates_json:
+        payload = load_candidates_json(args.candidates_json)
+    elif args.empty:
+        payload = {"candidates": []}
+    else:
+        payload = {
+            "candidates": candidates_from_stock_pool(args.stock_pool),
+            "notes": (
+                "No candidates JSON was provided. This ledger was generated from "
+                "the current stock pool snapshot; source rows are stock-pool "
+                "provenance, not external news evidence."
+            ),
+        }
     title = args.title or payload.get("title", "")
     notes = args.notes or payload.get("notes", "")
 

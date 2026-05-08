@@ -117,6 +117,8 @@ research_ledgers/
 
 `research_ledgers/` 是本地产物目录，默认不提交到 git。`ledger.json` 会记录新闻窗口、候选股票、供应链路径、证据摘要、来源 URL、置信度、淘汰原因，以及当次 `ai_stock_pool.csv` 的 SHA-256。
 
+如果没有传 `--candidates-json`，脚本会从当前 `ai_stock_pool.csv` 生成一份股票池快照 ledger，`source_type` 会标记为 `stock_pool_snapshot`。这能保证完整 pipeline 总是有可对账的 ledger；真正的外部新闻来源仍应通过 `--candidates-json` 输入。
+
 当前推荐的研究 loop 是：
 
 ```text

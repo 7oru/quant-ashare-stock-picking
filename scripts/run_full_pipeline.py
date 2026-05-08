@@ -22,7 +22,7 @@ from src.pipeline_artifacts import (
     write_run_manifest,
     write_training_data,
 )
-from src.research_ledger import create_research_ledger, load_candidates_json
+from src.research_ledger import candidates_from_stock_pool, create_research_ledger, load_candidates_json
 from src.stock_ranker import StockRanker
 
 
@@ -61,7 +61,17 @@ def main() -> None:
     training_dir = Path("training_data") / run_id
     reconciliation_dir = Path("reconciliation") / run_id
 
-    payload = load_candidates_json(args.candidates_json) if args.candidates_json else {"candidates": []}
+    if args.candidates_json:
+        payload = load_candidates_json(args.candidates_json)
+    else:
+        payload = {
+            "candidates": candidates_from_stock_pool(args.csv),
+            "notes": (
+                "No candidates JSON was provided. This ledger was generated from "
+                "the current stock pool snapshot; source rows are stock-pool "
+                "provenance, not external news evidence."
+            ),
+        }
     research_paths = create_research_ledger(
         news_window_start=args.news_window_start,
         news_window_end=args.news_window_end,

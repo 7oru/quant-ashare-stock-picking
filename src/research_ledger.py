@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+import pandas as pd
+
 from .results_manager import (
     create_timestamped_result_dir,
     current_git_commit,
@@ -34,6 +36,47 @@ def load_candidates_json(path: str | Path) -> Dict[str, Any]:
         payload.setdefault("candidates", [])
         return payload
     raise ValueError("Candidate JSON must be a list or an object with a candidates list")
+
+
+def candidates_from_stock_pool(csv_path: str | Path) -> List[Dict[str, Any]]:
+    """
+    Build snapshot candidates from the current stock pool.
+
+    This is a fallback for full-pipeline runs where no LLM evidence payload is
+    provided. It preserves the pipeline's stock-pool state without pretending
+    that external news sources were supplied.
+    """
+    stock_pool = pd.read_csv(csv_path, encoding="utf-8-sig")
+    candidates = []
+    for row in stock_pool.to_dict(orient="records"):
+        recommended_logic = str(row.get("recommended_logic", "") or "")
+        candidates.append(
+            {
+                "stock_code": row.get("stock_code", ""),
+                "stock_name": row.get("stock_name", ""),
+                "decision": "pool_member",
+                "sector": row.get("sector", ""),
+                "sub_sector": row.get("sub_sector", ""),
+                "ai_exposure": row.get("ai_exposure", ""),
+                "confidence": "snapshot_only",
+                "news_heat": "",
+                "upstream_depth": "",
+                "supply_chain_path": "",
+                "evidence_summary": recommended_logic,
+                "rejection_reason": "",
+                "evidence": [
+                    {
+                        "title": "ai_stock_pool.csv snapshot",
+                        "url": "",
+                        "published_at": "",
+                        "source_type": "stock_pool_snapshot",
+                        "claim": recommended_logic,
+                        "confidence": "snapshot_only",
+                    }
+                ],
+            }
+        )
+    return candidates
 
 
 def create_research_ledger(
@@ -100,6 +143,7 @@ def _summary(candidates: Iterable[Dict[str, Any]]) -> Dict[str, int]:
         "accepted_count": decisions.count("accepted"),
         "rejected_count": decisions.count("rejected"),
         "watchlist_count": decisions.count("watchlist"),
+        "pool_member_count": decisions.count("pool_member"),
     }
 
 
