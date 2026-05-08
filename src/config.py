@@ -18,6 +18,9 @@ FACTOR_WEIGHTS = {
 # 行业调整系数（不同行业的因子需要调整）
 INDUSTRY_ADJUSTMENT = {
     '上游-算力基础设施': {'valuation': 1.0, 'growth': 1.0, 'quality': 1.0},
+    '上游-PCB/CCL': {'valuation': 1.0, 'growth': 1.1, 'quality': 1.0},
+    '上游-存储器': {'valuation': 1.0, 'growth': 1.2, 'quality': 0.95},
+    '上游-半导体材料': {'valuation': 1.0, 'growth': 1.1, 'quality': 1.0},
     '上游-液冷技术': {'valuation': 1.0, 'growth': 1.1, 'quality': 1.0},
     '上游-电力设备': {'valuation': 0.9, 'growth': 0.9, 'quality': 1.1},
     '中游-芯片': {'valuation': 1.2, 'growth': 1.2, 'quality': 0.9},

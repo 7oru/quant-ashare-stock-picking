@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI upstream stock research"
+  short_description: "Find AI upstream A-share candidates."
+  default_prompt: "Find recent AI upstream supply-chain stock candidates and prepare rows for an A-share stock pool CSV."

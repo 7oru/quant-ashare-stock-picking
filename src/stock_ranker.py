@@ -74,6 +74,13 @@ class StockRanker:
         # 2. 获取数据
         log("获取股票数据...")
         price_data = self.data_fetcher.get_price_data(stock_codes, lookback_days=lookback_days)
+        available_codes = list(price_data.keys())
+        missing_codes = [code for code in stock_codes if code not in price_data]
+        if missing_codes:
+            log(f"跳过缺少价格数据的股票: {', '.join(missing_codes)}")
+            stock_info = stock_info.loc[available_codes]
+            stock_codes = available_codes
+            log(f"进入因子计算股票数量: {len(stock_codes)}")
         financial_data = self.data_fetcher.get_financial_data(stock_codes)
         
         # 3. 计算因子得分

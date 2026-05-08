@@ -8,7 +8,11 @@ Data Fetching Module
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List
+import multiprocessing
+import os
 import sys
+import tempfile
+import time
 
 from .data_cache import TmpDataCache
 from .market_features import calculate_price_features
@@ -17,6 +21,26 @@ from .market_features import calculate_price_features
 def log(msg):
     print(msg)
     sys.stdout.flush()
+
+
+class DataFetchTimeout(TimeoutError):
+    pass
+
+
+def fetch_spot_dataframe_worker(result_path: str, conn) -> None:
+    try:
+        import akshare as ak
+
+        data = ak.stock_zh_a_spot_em()
+        if data is None or data.empty:
+            conn.send(("error", "实时行情数据为空"))
+            return
+        data.to_pickle(result_path)
+        conn.send(("ok", result_path))
+    except Exception as e:
+        conn.send(("error", repr(e)))
+    finally:
+        conn.close()
 
 
 class StockDataFetcher:
@@ -32,6 +56,7 @@ class StockDataFetcher:
         """
         self.cache = {}
         self.data_cache = TmpDataCache()
+        self.spot_disabled_reason = None
         
     def get_price_data(self, stock_codes: List[str],
                        lookback_days: int = 240) -> Dict[str, Dict]:
@@ -46,7 +71,7 @@ class StockDataFetcher:
             字典格式的股票价格数据
 
         Raises:
-            RuntimeError: 当无法获取股票数据时
+            RuntimeError: 当无法获取任何股票数据时
         """
         return self._get_real_price_data(stock_codes, lookback_days)
     
@@ -93,7 +118,7 @@ class StockDataFetcher:
         AkShare是完全开源免费的财经数据接口
         
         Raises:
-            RuntimeError: 当无法获取股票数据时
+            RuntimeError: 当无法获取任何股票数据时
         """
         try:
             import akshare as ak
@@ -134,7 +159,9 @@ class StockDataFetcher:
                     failed_stocks.append(code)
                     
             if failed_stocks:
-                raise RuntimeError(f"无法获取以下股票的价格数据: {', '.join(failed_stocks)}")
+                log(f"警告: {len(failed_stocks)} 只股票无法获取价格数据: {', '.join(failed_stocks[:5])}...")
+                if len(failed_stocks) == len(stock_codes):
+                    raise RuntimeError("无法获取任何股票的价格数据")
                     
             return price_data
             
@@ -168,8 +195,18 @@ class StockDataFetcher:
         try:
             import akshare as ak
 
+            if self.spot_disabled_reason:
+                log(f"跳过实时行情数据: {self.spot_disabled_reason}")
+                return {}
+
             log(f"获取实时行情数据...")
-            spot_df = self._get_spot_dataframe(ak)
+            try:
+                spot_df = self._get_spot_dataframe(ak)
+            except Exception as e:
+                message = str(e) or repr(e)
+                self.spot_disabled_reason = message
+                log(f"警告: 获取实时行情数据失败，将使用价格数据代理因子继续运行: {message}")
+                return {}
             spot_df = spot_df.set_index('代码')
             log(f"实时行情数据获取完成，共 {len(spot_df)} 只股票")
 
@@ -378,14 +415,64 @@ class StockDataFetcher:
 
     def _get_spot_dataframe(self, ak) -> pd.DataFrame:
         key = {"api": "stock_zh_a_spot_em"}
-        spot_df, cache_hit, cache_path = self.data_cache.get_or_fetch_dataframe(
-            "spot",
-            key,
-            ak.stock_zh_a_spot_em,
-        )
-        if cache_hit:
+        cached = self.data_cache.get_dataframe("spot", key)
+        cache_path = self.data_cache.path_for("spot", key)
+        if cached is not None:
             log(f"使用缓存实时行情数据: {cache_path}")
-        return spot_df.copy()
+            return cached.copy()
+
+        spot_timeout = int(os.environ.get("QUANT_SPOT_TIMEOUT_SECONDS", "120"))
+        if spot_timeout <= 0:
+            spot_df = ak.stock_zh_a_spot_em()
+            self.data_cache.set_dataframe("spot", key, spot_df)
+            return spot_df.copy()
+
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(
+            prefix=f"{cache_path.stem}.",
+            suffix=".tmp",
+            dir=cache_path.parent,
+        )
+        os.close(fd)
+
+        ctx = multiprocessing.get_context("spawn")
+        parent_conn, child_conn = ctx.Pipe(duplex=False)
+        process = ctx.Process(
+            target=fetch_spot_dataframe_worker,
+            args=(tmp_path, child_conn),
+        )
+        process.start()
+        child_conn.close()
+
+        deadline = time.monotonic() + spot_timeout
+        try:
+            while time.monotonic() < deadline:
+                if parent_conn.poll(0.25):
+                    try:
+                        status, payload = parent_conn.recv()
+                    except EOFError:
+                        process.join(timeout=1)
+                        raise RuntimeError(f"实时行情子进程没有返回数据: exitcode={process.exitcode}")
+                    process.join(timeout=1)
+                    if status == "ok":
+                        spot_df = pd.read_pickle(payload)
+                        self.data_cache.set_dataframe("spot", key, spot_df)
+                        return spot_df.copy()
+                    raise RuntimeError(payload)
+
+                if not process.is_alive():
+                    process.join(timeout=1)
+                    raise RuntimeError(f"实时行情子进程异常退出: exitcode={process.exitcode}")
+
+            process.terminate()
+            process.join(timeout=3)
+            raise DataFetchTimeout(f"实时行情接口超时超过 {spot_timeout} 秒")
+        finally:
+            parent_conn.close()
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
     def _get_hist_dataframe(
         self,

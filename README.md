@@ -7,6 +7,7 @@
 ## 现在能做什么
 
 - 对 `ai_stock_pool.csv` 中的股票做多因子排序。
+- 用 repo-local skill 从近期 AI 上游新闻中扩展股票池候选。
 - 输出推荐评级和目标仓位，默认分为核心配置、卫星配置、观察、不配置。
 - 用同一套因子逻辑做周度、月度或季度调仓回测。
 - 每次运行写入独立目录：`results/<timestamp>/`。
@@ -61,6 +62,32 @@ results/
 ```
 
 如果同一秒内多次运行，会自动追加 `_01`、`_02` 之类的后缀，避免覆盖已有结果。
+
+## LLM 股票池扩展
+
+repo 内置了一个 Codex skill：
+
+```text
+skills/ai-upstream-stock-research/
+```
+
+它用于把最近一周 AI 基础设施新闻转成 A 股候选池，重点看更上游的二阶供应链，而不是泛 AI 应用叙事。例如：
+
+- GPU/AI 服务器 -> 高多层 PCB -> 高频高速 CCL -> 铜箔、树脂、玻纤布。
+- HBM/NAND/SSD -> 存储模组、封装测试 -> 前驱体、电子特气、基板材料。
+- 数据中心扩建 -> 配电、UPS、变压器、液冷和精密温控。
+
+使用时让 Codex 调用 `ai-upstream-stock-research`，先基于最近 7 天新闻做主题图谱，再输出匹配 `ai_stock_pool.csv` 的候选行。CSV schema 见：
+
+```text
+skills/ai-upstream-stock-research/references/csv-schema.md
+```
+
+当前推荐的研究 loop 是：
+
+```text
+LLM 新闻/供应链研究 -> 更新 ai_stock_pool.csv -> 多因子排名 -> 回测验证 -> 复盘结果和股票池
+```
 
 ## 选股入口
 
@@ -137,6 +164,12 @@ AkShare 的部分接口比较慢，项目默认把结果缓存到：
 export QUANT_ASHARE_CACHE_DIR=/tmp/my_quant_cache
 ```
 
+实时行情全表接口如果超时，选股会降级使用日线价格特征继续运行。默认超时上限是 120 秒，可以调整：
+
+```bash
+export QUANT_SPOT_TIMEOUT_SECONDS=60
+```
+
 删除缓存目录即可强制重新拉取数据。
 
 ## 因子模型
@@ -182,6 +215,7 @@ export QUANT_ASHARE_CACHE_DIR=/tmp/my_quant_cache
 ├── ai_stock_ranker.py           # 选股 CLI
 ├── backtest_pipeline.py         # 回测 CLI
 ├── ai_stock_pool.csv            # 当前股票池
+├── skills/                      # repo-local Codex skills
 ├── scripts/                     # 数据源探索脚本
 ├── src/
 │   ├── backtester.py            # 回测流程
@@ -231,5 +265,6 @@ python backtest_pipeline.py --help
 - 这不是交易系统，没有下单、风控执行或实时监控能力。
 - 回测没有处理停牌、涨跌停无法成交、真实滑点、分红税费等交易细节。
 - 股票池本身带有主观筛选，回测结果受股票池选择影响很大。
+- LLM 扩池依赖新闻和供应链资料，必须做来源核验和人工复盘。
 - 财务因子缺少完整点时数据时会使用代理变量。
 - 所有结果只适合研究和决策辅助，不构成投资建议。
