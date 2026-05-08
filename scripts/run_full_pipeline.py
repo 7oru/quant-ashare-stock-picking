@@ -27,6 +27,28 @@ from src.research_ledger import candidates_from_stock_pool, create_research_ledg
 from src.stock_ranker import StockRanker
 
 
+def candidate_visible_dates_from_payload(payload: dict, default_visible_date: str) -> dict:
+    """
+    Treat accepted/watchlist LLM candidates as visible from the research window end.
+    Pool snapshot rows are baseline universe members and do not get gated.
+    """
+    visible_dates = {}
+    for candidate in payload.get("candidates", []):
+        decision = str(candidate.get("decision", "")).lower()
+        if decision in {"", "pool_member", "rejected"}:
+            continue
+        stock_code = candidate.get("stock_code")
+        if not stock_code:
+            continue
+        visible_dates[str(stock_code)] = (
+            candidate.get("as_of_date")
+            or candidate.get("visible_date")
+            or candidate.get("decision_date")
+            or default_visible_date
+        )
+    return visible_dates
+
+
 def main() -> None:
     today = date.today()
     default_end = today.strftime("%Y-%m-%d")
@@ -73,6 +95,7 @@ def main() -> None:
                 "provenance, not external news evidence."
             ),
         }
+    candidate_visible_dates = candidate_visible_dates_from_payload(payload, args.news_window_end)
     research_paths = create_research_ledger(
         news_window_start=args.news_window_start,
         news_window_end=args.news_window_end,
@@ -106,6 +129,7 @@ def main() -> None:
         fee_bps=args.fee_bps,
         output_dir=str(raw_output_dir),
         output_timestamp="backtest",
+        candidate_visible_dates=candidate_visible_dates,
     )
 
     primary_result_paths = write_merged_scores(

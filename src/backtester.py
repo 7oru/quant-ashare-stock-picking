@@ -5,9 +5,10 @@ Backtest pipeline for the multi-factor stock picker
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -46,6 +47,7 @@ class BacktestPipeline:
         fee_bps: float = 10.0,
         output_dir: str = "results",
         output_timestamp: str | None = None,
+        candidate_visible_dates: Optional[Dict[str, str]] = None,
     ) -> Dict[str, object]:
         """
         运行回测并保存结果。
@@ -55,6 +57,7 @@ class BacktestPipeline:
         stock_codes = stock_info.index.tolist()
         start = pd.Timestamp(start_date)
         end = pd.Timestamp(end_date)
+        candidate_visible_dates = self._normalize_visible_dates(candidate_visible_dates or {})
 
         histories = self._fetch_histories(stock_codes, start, end, lookback_days)
         if not histories:
@@ -70,13 +73,13 @@ class BacktestPipeline:
 
         close_panel = self._close_panel(histories, calendar)
         stock_returns = close_panel.pct_change().replace([np.inf, -np.inf], np.nan)
-        benchmark_returns = stock_returns.mean(axis=1, skipna=True).fillna(0)
 
         equity = float(initial_capital)
         benchmark_equity = float(initial_capital)
         previous_weights = pd.Series(dtype="float64")
         equity_records = []
         rebalance_records = []
+        point_in_time_records = []
 
         for i, signal_date in enumerate(rebalance_dates):
             signal_loc = calendar.get_loc(signal_date)
@@ -89,12 +92,25 @@ class BacktestPipeline:
             if len(trade_dates) == 0:
                 continue
 
-            price_data, financial_data = self._build_signal_data(histories, signal_date, lookback_days)
+            visible_stock_info, point_in_time_record = self._visible_stock_info(
+                stock_info,
+                signal_date,
+                candidate_visible_dates,
+            )
+            eligible_histories = {
+                code: history
+                for code, history in histories.items()
+                if code in visible_stock_info.index
+            }
+            point_in_time_record["history_available_count"] = len(eligible_histories)
+            point_in_time_records.append(point_in_time_record)
+
+            price_data, financial_data = self._build_signal_data(eligible_histories, signal_date, lookback_days)
             if len(price_data) < max(3, min(top_n, 5)):
                 log(f"{signal_date.date()} 可用股票过少，跳过调仓")
                 continue
 
-            available_stock_info = stock_info.loc[stock_info.index.intersection(price_data.keys())]
+            available_stock_info = visible_stock_info.loc[visible_stock_info.index.intersection(price_data.keys())]
             factors = self.factor_calculator.calculate_all_factors(price_data, financial_data)
             factors = self.factor_calculator.apply_industry_adjustment(factors, available_stock_info)
             composite_score = self.factor_calculator.calculate_composite_score(factors)
@@ -103,6 +119,12 @@ class BacktestPipeline:
             weights = self._target_weights(ranking, top_n)
             selected_returns = stock_returns.reindex(columns=weights.index).loc[trade_dates].fillna(0)
             holding_returns = (1 + selected_returns).prod() - 1
+            benchmark_period_returns = (
+                stock_returns.reindex(columns=visible_stock_info.index)
+                .loc[trade_dates]
+                .mean(axis=1, skipna=True)
+                .fillna(0)
+            )
             turnover = self._turnover(previous_weights, weights)
             fee_rate = turnover * fee_bps / 10000
             equity *= max(0, 1 - fee_rate)
@@ -129,13 +151,14 @@ class BacktestPipeline:
                         "liquidity_score": row.get("liquidity_score", 50),
                         "holding_return": holding_returns.get(stock_code, np.nan),
                         "weighted_contribution": weights.loc[stock_code] * holding_returns.get(stock_code, 0),
+                        "eligible_universe_count": point_in_time_record["eligible_universe_count"],
                     }
                 )
 
             for trade_date in trade_dates:
                 daily_stock_returns = stock_returns.reindex(columns=weights.index).loc[trade_date].fillna(0)
                 strategy_return = float((daily_stock_returns * weights).sum())
-                benchmark_return = float(benchmark_returns.loc[trade_date])
+                benchmark_return = float(benchmark_period_returns.loc[trade_date])
 
                 equity *= 1 + strategy_return
                 benchmark_equity *= 1 + benchmark_return
@@ -163,6 +186,7 @@ class BacktestPipeline:
             equity_curve["benchmark_equity"] / equity_curve["benchmark_equity"].cummax() - 1
         )
         rebalances = pd.DataFrame(rebalance_records)
+        point_in_time_report = pd.DataFrame(point_in_time_records)
         summary = self._summary(equity_curve, initial_capital, len(rebalance_dates))
 
         run_config = {
@@ -174,13 +198,27 @@ class BacktestPipeline:
             "lookback_days": lookback_days,
             "top_n": top_n,
             "fee_bps": fee_bps,
+            "as_of_date": end_date,
+            "point_in_time_stock_pool_policy": "filter stock_pool snapshot by list_date <= signal_date",
+            "point_in_time_llm_candidate_policy": "filter LLM candidates by candidate_visible_dates <= signal_date",
+            "point_in_time_financial_data_policy": "price-only point-in-time proxy in backtest; fundamental fields are null at each signal date",
+            "candidate_visible_dates": self._json_visible_dates(candidate_visible_dates),
             **stock_pool_metadata,
         }
-        paths = self._save_outputs(summary, equity_curve, rebalances, output_dir, run_config, output_timestamp)
+        paths = self._save_outputs(
+            summary,
+            equity_curve,
+            rebalances,
+            point_in_time_report,
+            output_dir,
+            run_config,
+            output_timestamp,
+        )
         return {
             "summary": summary,
             "equity_curve": equity_curve,
             "rebalances": rebalances,
+            "point_in_time_report": point_in_time_report,
             "paths": paths,
             "output_dir": str(Path(paths["summary"]).parent),
         }
@@ -349,6 +387,50 @@ class BacktestPipeline:
         return price_data, financial_data
 
     @staticmethod
+    def _visible_stock_info(
+        stock_info: pd.DataFrame,
+        signal_date: pd.Timestamp,
+        candidate_visible_dates: Dict[str, pd.Timestamp],
+    ) -> Tuple[pd.DataFrame, Dict[str, object]]:
+        if "list_date" in stock_info.columns:
+            list_dates = pd.to_datetime(stock_info["list_date"], errors="coerce")
+        else:
+            list_dates = pd.Series(pd.NaT, index=stock_info.index)
+        listed_mask = list_dates.isna() | (list_dates <= signal_date)
+        candidate_mask = pd.Series(True, index=stock_info.index)
+
+        for stock_code, visible_date in candidate_visible_dates.items():
+            if stock_code in candidate_mask.index and visible_date > signal_date:
+                candidate_mask.loc[stock_code] = False
+
+        visible_mask = listed_mask & candidate_mask
+        return stock_info.loc[visible_mask].copy(), {
+            "signal_date": signal_date,
+            "stock_pool_rows": len(stock_info),
+            "eligible_universe_count": int(visible_mask.sum()),
+            "excluded_not_listed_count": int((~listed_mask).sum()),
+            "excluded_llm_candidate_not_visible_count": int((listed_mask & ~candidate_mask).sum()),
+            "missing_list_date_count": int(list_dates.isna().sum()),
+        }
+
+    @staticmethod
+    def _normalize_visible_dates(candidate_visible_dates: Dict[str, str]) -> Dict[str, pd.Timestamp]:
+        normalized = {}
+        for stock_code, visible_date in candidate_visible_dates.items():
+            parsed = pd.to_datetime(visible_date, errors="coerce")
+            if pd.notna(parsed):
+                normalized[str(stock_code)] = pd.Timestamp(parsed).normalize()
+        return normalized
+
+    @staticmethod
+    def _json_visible_dates(candidate_visible_dates: Dict[str, pd.Timestamp]) -> str:
+        serializable = {
+            stock_code: visible_date.strftime("%Y-%m-%d")
+            for stock_code, visible_date in sorted(candidate_visible_dates.items())
+        }
+        return json.dumps(serializable, ensure_ascii=False, sort_keys=True)
+
+    @staticmethod
     def _build_ranking(
         stock_info: pd.DataFrame,
         factors: pd.DataFrame,
@@ -463,6 +545,7 @@ class BacktestPipeline:
         summary: pd.DataFrame,
         equity_curve: pd.DataFrame,
         rebalances: pd.DataFrame,
+        point_in_time_report: pd.DataFrame,
         output_dir: str,
         run_config: Dict[str, object],
         output_timestamp: str | None = None,
@@ -473,11 +556,13 @@ class BacktestPipeline:
             "summary": str(run_dir / "backtest_summary.csv"),
             "equity": str(run_dir / "backtest_equity.csv"),
             "rebalances": str(run_dir / "backtest_rebalances.csv"),
+            "point_in_time": str(run_dir / "backtest_point_in_time.csv"),
         }
         pd.DataFrame([run_config]).to_csv(paths["config"], index=False)
         summary.to_csv(paths["summary"], index=False)
         equity_curve.to_csv(paths["equity"])
         rebalances.to_csv(paths["rebalances"], index=False)
+        point_in_time_report.to_csv(paths["point_in_time"], index=False)
         return paths
 
     @staticmethod

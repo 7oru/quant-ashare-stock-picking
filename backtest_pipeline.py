@@ -6,6 +6,7 @@ python backtest_pipeline.py --csv ai_stock_pool.csv --start 2024-01-01 --end 202
 """
 
 import argparse
+import json
 import os
 import sys
 
@@ -31,7 +32,18 @@ def main():
     parser.add_argument("--top-n", type=int, default=10, help="每次持仓股票数量")
     parser.add_argument("--fee-bps", type=float, default=10.0, help="单边交易成本, bps")
     parser.add_argument("--output-dir", type=str, default="results", help="基础输出目录，每次运行会创建 <timestamp> 子目录")
+    parser.add_argument(
+        "--candidate-visible-dates-json",
+        type=str,
+        default=None,
+        help="可选 JSON 文件，内容为 {stock_code: YYYY-MM-DD}，用于限制 LLM 新候选的历史可见日期",
+    )
     args = parser.parse_args()
+
+    candidate_visible_dates = None
+    if args.candidate_visible_dates_json:
+        with open(args.candidate_visible_dates_json, "r", encoding="utf-8") as handle:
+            candidate_visible_dates = json.load(handle)
 
     pipeline = BacktestPipeline()
     result = pipeline.run(
@@ -44,6 +56,7 @@ def main():
         top_n=args.top_n,
         fee_bps=args.fee_bps,
         output_dir=args.output_dir,
+        candidate_visible_dates=candidate_visible_dates,
     )
 
     print("\n回测完成")

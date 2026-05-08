@@ -70,7 +70,8 @@ results/
     ├── backtest_config.csv
     ├── backtest_summary.csv
     ├── backtest_equity.csv
-    └── backtest_rebalances.csv
+    ├── backtest_rebalances.csv
+    └── backtest_point_in_time.csv
 ```
 
 如果同一秒内多次运行，会自动追加 `_01`、`_02` 之类的后缀，避免覆盖已有结果。
@@ -190,8 +191,9 @@ python backtest_pipeline.py \
 | `--top-n` | `10` | 每次选择的股票数量 |
 | `--fee-bps` | `10.0` | 单边交易成本，单位 bps |
 | `--output-dir` | `results` | 基础输出目录，实际会写入其下的时间戳子目录 |
+| `--candidate-visible-dates-json` | 无 | 可选 `{stock_code: YYYY-MM-DD}`，限制 LLM 新候选进入历史回测 universe 的日期 |
 
-回测使用调仓日收盘前已经可见的历史 K 线计算信号，从下一个交易日开始持有。默认基准是股票池等权组合。
+回测使用调仓日收盘前已经可见的历史 K 线计算信号，从下一个交易日开始持有。每个调仓日会按 `list_date <= signal_date` 过滤股票池；完整闭环传入 `--candidates-json` 时，accepted/watchlist 的 LLM 新候选默认从 `news_window_end` 起才进入历史 universe，避免把刚研究出的股票穿越进更早的信号。`backtest_point_in_time.csv` 会记录每个调仓日的可见股票数、上市日期过滤数和 LLM 候选过滤数。默认基准是当期可见股票池等权组合。
 
 ## 数据缓存
 
