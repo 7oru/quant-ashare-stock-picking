@@ -9,14 +9,15 @@ venv/
 # Local generated artifacts
 results/*
 !results/.gitkeep
-research_ledgers/*
-!research_ledgers/.gitkeep
-reconciliation/*
-!reconciliation/.gitkeep
-training_data/*
-!training_data/.gitkeep
+audits/*
+!audits/.gitkeep
 
-# Local reconciliation and sample/training data
+# Legacy/local scratch artifact dirs
+ledgers/
+research_ledgers/
+reconciliation/
+reconcilliation/
+training_data/
 reconciliations/
 account_reconciliation/
 对账/

@@ -4,7 +4,7 @@
 
 ## P0: Research Evidence Ledger
 
-- [x] 为每次 LLM 扩池生成研究证据账本，保存到 `research_ledgers/<timestamp>/`。
+- [x] 为每次 LLM 扩池生成研究证据账本，保存到 `audits/<timestamp>/llm_research/`。
 - [x] 记录候选股票、新闻窗口、来源 URL、来源日期、供应链路径、证据摘要、置信度、淘汰原因。
 - [x] 在股票池 CSV 之外保留来源证据，避免把长文本和 URL 混进 `ai_stock_pool.csv`。
 - [x] 让 ranking/backtest 输出记录本次使用的股票池版本或 hash，便于复盘。
@@ -40,6 +40,6 @@
 ## P2: Run Artifact Archiving
 
 - [ ] 每次运行保存参数、代码 commit、输入 CSV hash、数据缓存命中情况和异常日志。
-- [ ] 将 ranking、backtest、research ledger、factor diagnostics 统一放在同一个 `results/<timestamp>/`。
-- [ ] 增加 `run_manifest.json`，记录所有输出文件路径和生成时间。
-- [ ] 支持按 run id 快速复盘一次完整实验。
+- [x] 将 training data 和主结果统一放在 `results/<timestamp>/`，将 ledger 和 reconciliation 放在 `audits/<timestamp>/`。
+- [x] 增加 `run_manifest.json`，记录所有输出文件路径和生成时间。
+- [x] 支持按 run id 快速复盘一次完整实验。

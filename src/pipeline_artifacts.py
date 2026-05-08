@@ -88,13 +88,84 @@ def write_training_data(
     }
 
 
+def write_merged_scores(
+    *,
+    output_dir: str | Path,
+    ranking: pd.DataFrame,
+    allocation: pd.DataFrame,
+    backtest_result: Dict[str, object],
+) -> Dict[str, str]:
+    """
+    Write the primary result: ranking and backtest evidence merged by stock.
+
+    Sorting is by backtesting_score descending, then by latest ranking ascending.
+    Non-selected stocks keep blank backtest fields and sort after selected names.
+    """
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    ranking_frame = ranking.reset_index().rename(columns={"index": "stock_code"})
+    allocation_frame = allocation[["target_weight", "position_value", "recommendation"]].reset_index()
+    allocation_frame = allocation_frame.rename(columns={"index": "stock_code"})
+    merged = ranking_frame.merge(allocation_frame, on="stock_code", how="left")
+
+    rebalances = backtest_result["rebalances"]
+    if not rebalances.empty and "stock_code" in rebalances.columns:
+        aggregations = {
+            "signal_date": "count",
+            "rank": "mean",
+            "target_weight": "mean",
+            "composite_score": "mean",
+        }
+        if "holding_return" in rebalances.columns:
+            aggregations["holding_return"] = "mean"
+        if "weighted_contribution" in rebalances.columns:
+            aggregations["weighted_contribution"] = "sum"
+
+        backtest_scores = rebalances.groupby("stock_code").agg(aggregations).reset_index()
+        backtest_scores = backtest_scores.rename(
+            columns={
+                "signal_date": "backtest_selected_count",
+                "rank": "backtest_avg_rank",
+                "target_weight": "backtest_avg_weight",
+                "composite_score": "backtest_avg_signal_score",
+                "holding_return": "backtest_avg_holding_return",
+                "weighted_contribution": "backtest_total_contribution",
+            }
+        )
+        if "backtest_avg_holding_return" in backtest_scores.columns:
+            backtest_scores["backtesting_score"] = backtest_scores["backtest_avg_holding_return"] * 100
+        else:
+            backtest_scores["backtesting_score"] = backtest_scores["backtest_avg_signal_score"]
+        merged = merged.merge(backtest_scores, on="stock_code", how="left")
+    else:
+        merged["backtesting_score"] = pd.NA
+        merged["backtest_selected_count"] = 0
+
+    if "backtest_selected_count" in merged.columns:
+        merged["backtest_selected_count"] = merged["backtest_selected_count"].fillna(0).astype(int)
+
+    merged["_backtesting_sort"] = pd.to_numeric(merged["backtesting_score"], errors="coerce").fillna(-1e18)
+    merged["_ranking_sort"] = pd.to_numeric(merged["rank"], errors="coerce").fillna(1e18)
+    merged = merged.sort_values(
+        ["_backtesting_sort", "_ranking_sort"],
+        ascending=[False, True],
+    ).drop(columns=["_backtesting_sort", "_ranking_sort"])
+    merged.insert(0, "result_rank", range(1, len(merged) + 1))
+
+    output_file = output_path / "ranking_backtest_scores.csv"
+    merged.to_csv(output_file, index=False)
+    return {"merged_scores": str(output_file)}
+
+
 def write_reconciliation_data(
     *,
     output_dir: str | Path,
     csv_path: str | Path,
     run_id: str,
     research_paths: Dict[str, str],
-    ranking_dir: str | Path,
+    raw_output_dir: str | Path,
+    primary_result_paths: Dict[str, str],
     backtest_paths: Dict[str, str],
     training_paths: Dict[str, str],
     ranking: pd.DataFrame,
@@ -105,7 +176,7 @@ def write_reconciliation_data(
     Write run reconciliation files.
     """
     output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=False)
+    output_path.mkdir(parents=True, exist_ok=True)
 
     stock_pool = pd.read_csv(csv_path, encoding="utf-8-sig")
     ranking_codes = set(ranking.index)
@@ -133,14 +204,16 @@ def write_reconciliation_data(
     pd.DataFrame(checks).to_csv(checks_path, index=False)
 
     artifact_paths = {
+        **{f"primary_{key}": value for key, value in primary_result_paths.items()},
         **{f"research_{key}": value for key, value in research_paths.items()},
         **{f"backtest_{key}": value for key, value in backtest_paths.items()},
         **{f"training_{key}": value for key, value in training_paths.items()},
     }
-    ranking_path = Path(ranking_dir)
-    for file_path in sorted(ranking_path.glob("*")):
+    raw_path = Path(raw_output_dir)
+    for file_path in sorted(raw_path.rglob("*")):
         if file_path.is_file():
-            artifact_paths[f"ranking_{file_path.stem}"] = str(file_path)
+            artifact_key = file_path.relative_to(raw_path).with_suffix("").as_posix().replace("/", "_")
+            artifact_paths[f"raw_{artifact_key}"] = str(file_path)
 
     manifest_path = output_path / "file_manifest.csv"
     manifest = _file_manifest_rows(artifact_paths)
@@ -172,7 +245,8 @@ def write_run_manifest(
     run_id: str,
     csv_path: str | Path,
     research_paths: Dict[str, str],
-    ranking_dir: str | Path,
+    raw_output_dir: str | Path,
+    primary_result_paths: Dict[str, str],
     backtest_paths: Dict[str, str],
     training_paths: Dict[str, str],
     reconciliation_paths: Dict[str, str],
@@ -180,27 +254,29 @@ def write_run_manifest(
     """
     Write a top-level manifest tying all folders together.
     """
+    target = Path(output_path)
     manifest = {
         "schema_version": "1.0",
         "run_id": run_id,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "git_commit": current_git_commit(Path(__file__).resolve().parents[1]),
         "stock_pool": describe_stock_pool(csv_path),
+        "primary_results": primary_result_paths,
         "folders": {
-            "research_ledger": str(Path(research_paths["ledger_dir"])),
-            "ranking": str(Path(ranking_dir)),
-            "backtest": str(Path(next(iter(backtest_paths.values()))).parent),
+            "results": str(target.parent),
+            "llm_research": str(Path(research_paths["ledger_dir"])),
+            "raw_outputs": str(Path(raw_output_dir)),
             "training_data": str(Path(next(iter(training_paths.values()))).parent),
-            "reconciliation": str(Path(next(iter(reconciliation_paths.values()))).parent),
+            "pipeline_reconcilliation": str(Path(next(iter(reconciliation_paths.values()))).parent),
         },
         "artifacts": {
+            "primary_results": primary_result_paths,
             "research": research_paths,
             "backtest": backtest_paths,
             "training": training_paths,
             "reconciliation": reconciliation_paths,
         },
     }
-    target = Path(output_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return str(target)

@@ -101,6 +101,8 @@ class BacktestPipeline:
 
             ranking = self._build_ranking(available_stock_info, factors, composite_score)
             weights = self._target_weights(ranking, top_n)
+            selected_returns = stock_returns.reindex(columns=weights.index).loc[trade_dates].fillna(0)
+            holding_returns = (1 + selected_returns).prod() - 1
             turnover = self._turnover(previous_weights, weights)
             fee_rate = turnover * fee_bps / 10000
             equity *= max(0, 1 - fee_rate)
@@ -125,6 +127,8 @@ class BacktestPipeline:
                         "momentum_score": row.get("momentum_score"),
                         "quality_score": row.get("quality_score"),
                         "liquidity_score": row.get("liquidity_score", 50),
+                        "holding_return": holding_returns.get(stock_code, np.nan),
+                        "weighted_contribution": weights.loc[stock_code] * holding_returns.get(stock_code, 0),
                     }
                 )
 

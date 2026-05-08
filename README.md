@@ -107,15 +107,16 @@ python scripts/create_research_ledger.py \
 默认会写到：
 
 ```text
-research_ledgers/
+audits/
 └── 20260508_112233/
-    ├── ledger.json       # canonical 结构化证据
-    ├── candidates.csv    # 候选股票索引
-    ├── sources.csv       # 来源和 claim 索引
-    └── notes.md
+    └── llm_research/
+        ├── ledger.json       # canonical 结构化证据
+        ├── candidates.csv    # 候选股票索引
+        ├── sources.csv       # 来源和 claim 索引
+        └── notes.md
 ```
 
-`research_ledgers/` 是本地产物目录，默认不提交到 git。`ledger.json` 会记录新闻窗口、候选股票、供应链路径、证据摘要、来源 URL、置信度、淘汰原因，以及当次 `ai_stock_pool.csv` 的 SHA-256。
+`audits/` 是本地审计产物目录，默认不提交到 git。`ledger.json` 会记录新闻窗口、候选股票、供应链路径、证据摘要、来源 URL、置信度、淘汰原因，以及当次 `ai_stock_pool.csv` 的 SHA-256。
 
 如果没有传 `--candidates-json`，脚本会从当前 `ai_stock_pool.csv` 生成一份股票池快照 ledger，`source_type` 会标记为 `stock_pool_snapshot`。这能保证完整 pipeline 总是有可对账的 ledger；真正的外部新闻来源仍应通过 `--candidates-json` 输入。
 
@@ -128,12 +129,11 @@ LLM 新闻/供应链研究 -> 证据账本 -> 更新 ai_stock_pool.csv -> 多因
 也可以用 `scripts/run_full_pipeline.py` 一次跑完整闭环。它会使用同一个 `run_id` 自动写入：
 
 ```text
-research_ledgers/<run_id>/       # LLM 研究证据账本
-results/<run_id>/ranking/        # 排名结果
-results/<run_id>/backtest/       # 回测结果
-training_data/<run_id>/          # 训练用特征/标签快照
-reconciliation/<run_id>/         # 对账检查和文件 manifest
+results/<run_id>/ranking_backtest_scores.csv       # 主结果，按 backtesting_score 再按 ranking 排序
+results/<run_id>/training_data/                     # 训练用特征/标签快照
 results/<run_id>/run_manifest.json
+audits/<run_id>/llm_research/                       # LLM 研究证据账本
+audits/<run_id>/pipeline_reconcilliation/           # 对账检查、raw ranking/backtest 和文件 manifest
 ```
 
 ## 选股入口
@@ -263,8 +263,7 @@ export QUANT_SPOT_TIMEOUT_SECONDS=60
 ├── ai_stock_ranker.py           # 选股 CLI
 ├── backtest_pipeline.py         # 回测 CLI
 ├── ai_stock_pool.csv            # 当前股票池
-├── reconciliation/              # 本地对账产物，默认 ignored
-├── research_ledgers/            # LLM 研究证据账本，本地生成内容默认 ignored
+├── audits/                      # 本地审计产物，默认 ignored
 ├── skills/                      # repo-local Codex skills
 ├── scripts/                     # 数据源探索脚本
 ├── src/
@@ -278,7 +277,6 @@ export QUANT_SPOT_TIMEOUT_SECONDS=60
 │   ├── results_manager.py       # 时间戳输出目录
 │   └── stock_ranker.py          # 选股流程协调
 ├── docs/legacy/                 # 历史分析文档
-├── training_data/               # 本地训练数据快照，默认 ignored
 └── results/                     # 运行结果
 ```
 

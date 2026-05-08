@@ -65,4 +65,4 @@ Then separately include the exact CSV rows if the user wants to review them.
 ## References
 
 - `references/csv-schema.md`: required `ai_stock_pool.csv` schema and field conventions.
-- `scripts/create_research_ledger.py`: creates folder-based evidence ledgers under `research_ledgers/<timestamp>/`.
+- `scripts/create_research_ledger.py`: creates folder-based evidence ledgers under `audits/<timestamp>/llm_research/`.

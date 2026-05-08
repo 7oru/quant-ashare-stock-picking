@@ -8,9 +8,11 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src.pipeline_artifacts import create_run_id
 from src.research_ledger import candidates_from_stock_pool, create_research_ledger, load_candidates_json
 
 
@@ -19,8 +21,8 @@ def main() -> None:
     parser.add_argument("--news-window-start", required=True, help="News window start date, YYYY-MM-DD")
     parser.add_argument("--news-window-end", required=True, help="News window end date, YYYY-MM-DD")
     parser.add_argument("--stock-pool", default="ai_stock_pool.csv", help="Stock pool CSV path")
-    parser.add_argument("--output-root", default="research_ledgers", help="Base folder for ledger runs")
-    parser.add_argument("--timestamp", default=None, help="Optional folder timestamp override")
+    parser.add_argument("--output-root", default="audits", help="Base audit folder")
+    parser.add_argument("--run-id", default=None, help="Optional audit run id")
     parser.add_argument("--title", default="", help="Ledger title")
     parser.add_argument("--notes", default="", help="Free-form notes")
     parser.add_argument(
@@ -51,15 +53,16 @@ def main() -> None:
     title = args.title or payload.get("title", "")
     notes = args.notes or payload.get("notes", "")
 
+    run_id = create_run_id([args.output_root], timestamp=args.run_id)
     paths = create_research_ledger(
         news_window_start=args.news_window_start,
         news_window_end=args.news_window_end,
         stock_pool_path=args.stock_pool,
-        output_root=args.output_root,
+        output_root=str(Path(args.output_root) / run_id),
         title=title,
         notes=notes,
         candidates=payload.get("candidates", []),
-        timestamp=args.timestamp,
+        timestamp="llm_research",
     )
 
     print("Research ledger created")

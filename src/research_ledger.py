@@ -84,7 +84,7 @@ def create_research_ledger(
     news_window_start: str,
     news_window_end: str,
     stock_pool_path: str = "ai_stock_pool.csv",
-    output_root: str = "research_ledgers",
+    output_root: str = "audits",
     title: str = "",
     notes: str = "",
     candidates: Optional[List[Dict[str, Any]]] = None,

@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.backtester import BacktestPipeline
 from src.pipeline_artifacts import (
     create_run_id,
+    write_merged_scores,
     write_reconciliation_data,
     write_run_manifest,
     write_training_data,
@@ -53,13 +54,13 @@ def main() -> None:
 
     os.environ["QUANT_SPOT_TIMEOUT_SECONDS"] = str(args.spot_timeout_seconds)
 
-    roots = ["research_ledgers", "results", "training_data", "reconciliation"]
+    roots = ["results", "audits"]
     run_id = create_run_id(roots, timestamp=args.run_id)
     results_root = Path("results") / run_id
-    ranking_dir = results_root / "ranking"
-    backtest_root = results_root
-    training_dir = Path("training_data") / run_id
-    reconciliation_dir = Path("reconciliation") / run_id
+    audits_root = Path("audits") / run_id
+    reconciliation_dir = audits_root / "pipeline_reconcilliation"
+    raw_output_dir = reconciliation_dir / "raw_outputs"
+    training_dir = results_root / "training_data"
 
     if args.candidates_json:
         payload = load_candidates_json(args.candidates_json)
@@ -76,23 +77,23 @@ def main() -> None:
         news_window_start=args.news_window_start,
         news_window_end=args.news_window_end,
         stock_pool_path=args.csv,
-        output_root="research_ledgers",
+        output_root=str(audits_root),
         title=args.title or payload.get("title", ""),
         notes=args.notes or payload.get("notes", ""),
         candidates=payload.get("candidates", []),
-        timestamp=run_id,
+        timestamp="llm_research",
     )
 
     ranker = StockRanker()
     ranking, allocation = ranker.rank_stocks(
         csv_path=args.csv,
         total_capital=args.capital,
-        output_path=str(ranking_dir / "ranking_result.csv"),
+        output_path=str(raw_output_dir / "ranking_result.csv"),
         lookback_days=args.lookback_days,
     )
     stock_info = pd.read_csv(args.csv, index_col="stock_code", encoding="utf-8-sig")
     report = ranker.generate_report(ranking, allocation, stock_info.loc[ranking.index.intersection(stock_info.index)])
-    (ranking_dir / "analysis_report.txt").write_text(report, encoding="utf-8")
+    (raw_output_dir / "analysis_report.txt").write_text(report, encoding="utf-8")
 
     backtest_result = BacktestPipeline().run(
         csv_path=args.csv,
@@ -103,10 +104,16 @@ def main() -> None:
         lookback_days=args.lookback_days,
         top_n=args.top_n,
         fee_bps=args.fee_bps,
-        output_dir=str(backtest_root),
+        output_dir=str(raw_output_dir),
         output_timestamp="backtest",
     )
 
+    primary_result_paths = write_merged_scores(
+        output_dir=results_root,
+        ranking=ranking,
+        allocation=allocation,
+        backtest_result=backtest_result,
+    )
     training_paths = write_training_data(
         output_dir=training_dir,
         csv_path=args.csv,
@@ -120,7 +127,8 @@ def main() -> None:
         csv_path=args.csv,
         run_id=run_id,
         research_paths=research_paths,
-        ranking_dir=ranking_dir,
+        raw_output_dir=raw_output_dir,
+        primary_result_paths=primary_result_paths,
         backtest_paths=backtest_result["paths"],
         training_paths=training_paths,
         ranking=ranking,
@@ -132,7 +140,8 @@ def main() -> None:
         run_id=run_id,
         csv_path=args.csv,
         research_paths=research_paths,
-        ranking_dir=ranking_dir,
+        raw_output_dir=raw_output_dir,
+        primary_result_paths=primary_result_paths,
         backtest_paths=backtest_result["paths"],
         training_paths=training_paths,
         reconciliation_paths=reconciliation_paths,
@@ -140,11 +149,11 @@ def main() -> None:
 
     print("\nFull pipeline complete")
     print(f"run_id: {run_id}")
-    print(f"research ledger: {research_paths['ledger_dir']}")
-    print(f"ranking: {ranking_dir}")
-    print(f"backtest: {backtest_result['output_dir']}")
+    print(f"primary result: {primary_result_paths['merged_scores']}")
+    print(f"llm research audit: {research_paths['ledger_dir']}")
+    print(f"raw outputs: {raw_output_dir}")
     print(f"training data: {training_dir}")
-    print(f"reconciliation: {reconciliation_dir}")
+    print(f"pipeline reconciliation: {reconciliation_dir}")
     print(f"manifest: {manifest_path}")
 
 
