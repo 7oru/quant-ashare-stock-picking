@@ -38,6 +38,17 @@ python backtest_pipeline.py \
   --fee-bps 10
 ```
 
+运行完整闭环：
+
+```bash
+python scripts/run_full_pipeline.py \
+  --csv ai_stock_pool.csv \
+  --start 2026-03-01 \
+  --end 2026-05-08 \
+  --lookback-days 60 \
+  --top-n 10
+```
+
 ## 输出目录
 
 默认每次运行都会创建一个时间戳目录：
@@ -110,6 +121,17 @@ research_ledgers/
 
 ```text
 LLM 新闻/供应链研究 -> 证据账本 -> 更新 ai_stock_pool.csv -> 多因子排名 -> 回测验证 -> 复盘结果和股票池
+```
+
+也可以用 `scripts/run_full_pipeline.py` 一次跑完整闭环。它会使用同一个 `run_id` 自动写入：
+
+```text
+research_ledgers/<run_id>/       # LLM 研究证据账本
+results/<run_id>/ranking/        # 排名结果
+results/<run_id>/backtest/       # 回测结果
+training_data/<run_id>/          # 训练用特征/标签快照
+reconciliation/<run_id>/         # 对账检查和文件 manifest
+results/<run_id>/run_manifest.json
 ```
 
 ## 选股入口
@@ -239,6 +261,7 @@ export QUANT_SPOT_TIMEOUT_SECONDS=60
 ├── ai_stock_ranker.py           # 选股 CLI
 ├── backtest_pipeline.py         # 回测 CLI
 ├── ai_stock_pool.csv            # 当前股票池
+├── reconciliation/              # 本地对账产物，默认 ignored
 ├── research_ledgers/            # LLM 研究证据账本，本地生成内容默认 ignored
 ├── skills/                      # repo-local Codex skills
 ├── scripts/                     # 数据源探索脚本
@@ -253,6 +276,7 @@ export QUANT_SPOT_TIMEOUT_SECONDS=60
 │   ├── results_manager.py       # 时间戳输出目录
 │   └── stock_ranker.py          # 选股流程协调
 ├── docs/legacy/                 # 历史分析文档
+├── training_data/               # 本地训练数据快照，默认 ignored
 └── results/                     # 运行结果
 ```
 
@@ -261,6 +285,7 @@ export QUANT_SPOT_TIMEOUT_SECONDS=60
 - `scripts/explore_akshare_data.py`: 探索 AkShare 可用数据源。
 - `scripts/explore_akshare_financial.py`: 探索财务相关接口。
 - `scripts/create_research_ledger.py`: 创建 LLM 扩池证据账本。
+- `scripts/run_full_pipeline.py`: 运行完整闭环并写入对账、训练和回测产物。
 
 ## 数据来源
 

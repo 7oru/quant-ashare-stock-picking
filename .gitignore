@@ -11,9 +11,12 @@ results/*
 !results/.gitkeep
 research_ledgers/*
 !research_ledgers/.gitkeep
+reconciliation/*
+!reconciliation/.gitkeep
+training_data/*
+!training_data/.gitkeep
 
 # Local reconciliation and sample/training data
-reconciliation/
 reconciliations/
 account_reconciliation/
 对账/
@@ -21,4 +24,3 @@ sample_data/
 sample-data/
 sample_runs/
 samples/
-training_data/

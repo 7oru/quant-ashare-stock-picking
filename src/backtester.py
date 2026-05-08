@@ -45,6 +45,7 @@ class BacktestPipeline:
         top_n: int = 10,
         fee_bps: float = 10.0,
         output_dir: str = "results",
+        output_timestamp: str | None = None,
     ) -> Dict[str, object]:
         """
         运行回测并保存结果。
@@ -171,7 +172,7 @@ class BacktestPipeline:
             "fee_bps": fee_bps,
             **stock_pool_metadata,
         }
-        paths = self._save_outputs(summary, equity_curve, rebalances, output_dir, run_config)
+        paths = self._save_outputs(summary, equity_curve, rebalances, output_dir, run_config, output_timestamp)
         return {
             "summary": summary,
             "equity_curve": equity_curve,
@@ -460,8 +461,9 @@ class BacktestPipeline:
         rebalances: pd.DataFrame,
         output_dir: str,
         run_config: Dict[str, object],
+        output_timestamp: str | None = None,
     ) -> Dict[str, str]:
-        run_dir = create_timestamped_result_dir(output_dir)
+        run_dir = create_timestamped_result_dir(output_dir, timestamp=output_timestamp)
         paths = {
             "config": str(run_dir / "backtest_config.csv"),
             "summary": str(run_dir / "backtest_summary.csv"),
