@@ -132,7 +132,7 @@ def _obv(close: pd.Series, volume: pd.Series) -> tuple[float, float]:
 
 def calculate_price_features(df: pd.DataFrame) -> Dict[str, float]:
     """
-    将 AkShare 日线数据转换为选股/回测共用的点时特征。
+    将统一日线数据转换为选股/回测共用的点时特征。
 
     The function only uses rows already present in ``df`` so it is safe for
     point-in-time backtests when callers slice history up to the signal date.

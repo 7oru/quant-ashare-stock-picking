@@ -17,6 +17,7 @@ from .config import POSITION_LIMITS
 from .data_cache import TmpDataCache
 from .factor_calculator import FactorCalculator
 from .market_features import calculate_price_features
+from .market_data_providers import get_hist_dataframe_with_fallback
 from .results_manager import create_timestamped_result_dir, describe_stock_pool
 
 
@@ -29,6 +30,9 @@ class BacktestPipeline:
     """
     使用同一套因子模型做点时滚动回测。
     """
+
+    POOL_ENTRY_DATE_COLUMNS = ("pool_entry_date", "stock_pool_as_of_date", "as_of_date")
+    INDUSTRY_AS_OF_DATE_COLUMNS = ("industry_as_of_date", "classification_as_of_date", "sector_as_of_date")
 
     def __init__(self):
         self.factor_calculator = FactorCalculator()
@@ -102,7 +106,13 @@ class BacktestPipeline:
                 for code, history in histories.items()
                 if code in visible_stock_info.index
             }
+            provider_counts = self._history_provider_counts(eligible_histories)
             point_in_time_record["history_available_count"] = len(eligible_histories)
+            point_in_time_record["history_provider_counts"] = json.dumps(
+                provider_counts,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
             point_in_time_records.append(point_in_time_record)
 
             price_data, financial_data = self._build_signal_data(eligible_histories, signal_date, lookback_days)
@@ -136,6 +146,9 @@ class BacktestPipeline:
             )
 
             for rank, (stock_code, row) in enumerate(ranking.loc[weights.index].iterrows(), 1):
+                history = eligible_histories.get(stock_code)
+                data_provider = history.attrs.get("data_provider", "unknown") if history is not None else "unknown"
+                provider_adjustment = history.attrs.get("provider_adjustment", "") if history is not None else ""
                 rebalance_records.append(
                     {
                         "signal_date": signal_date,
@@ -149,6 +162,8 @@ class BacktestPipeline:
                         "momentum_score": row.get("momentum_score"),
                         "quality_score": row.get("quality_score"),
                         "liquidity_score": row.get("liquidity_score", 50),
+                        "data_provider": data_provider,
+                        "provider_adjustment": provider_adjustment,
                         "holding_return": holding_returns.get(stock_code, np.nan),
                         "weighted_contribution": weights.loc[stock_code] * holding_returns.get(stock_code, 0),
                         "eligible_universe_count": point_in_time_record["eligible_universe_count"],
@@ -199,9 +214,23 @@ class BacktestPipeline:
             "top_n": top_n,
             "fee_bps": fee_bps,
             "as_of_date": end_date,
-            "point_in_time_stock_pool_policy": "filter stock_pool snapshot by list_date <= signal_date",
+            "point_in_time_stock_pool_policy": (
+                "filter stock_pool snapshot by list_date <= signal_date, "
+                "candidate_visible_dates <= signal_date, and row-level "
+                "pool_entry_date/stock_pool_as_of_date/as_of_date <= signal_date when present"
+            ),
             "point_in_time_llm_candidate_policy": "filter LLM candidates by candidate_visible_dates <= signal_date",
-            "point_in_time_financial_data_policy": "price-only point-in-time proxy in backtest; fundamental fields are null at each signal date",
+            "point_in_time_industry_data_policy": (
+                "mask sector/sub_sector/ai_exposure when industry_as_of_date/"
+                "classification_as_of_date/sector_as_of_date is after the signal date"
+            ),
+            "point_in_time_financial_data_policy": (
+                "price-only point-in-time proxy in backtest; revised/current "
+                "fundamental fields are null at each signal date"
+            ),
+            "historical_price_provider_policy": (
+                "try BaoStock daily history first, then Yahoo chart fallback when enabled"
+            ),
             "candidate_visible_dates": self._json_visible_dates(candidate_visible_dates),
             **stock_pool_metadata,
         }
@@ -212,7 +241,8 @@ class BacktestPipeline:
             point_in_time_report,
             output_dir,
             run_config,
-            output_timestamp,
+            as_of_date=end_date,
+            output_timestamp=output_timestamp,
         )
         return {
             "summary": summary,
@@ -230,11 +260,6 @@ class BacktestPipeline:
         end: pd.Timestamp,
         lookback_days: int,
     ) -> Dict[str, pd.DataFrame]:
-        try:
-            import akshare as ak
-        except ImportError as exc:
-            raise ImportError("akshare未安装，请先运行: pip install akshare") from exc
-
         fetch_start = start - pd.Timedelta(days=int(lookback_days * 1.8) + 30)
         histories: Dict[str, pd.DataFrame] = {}
         total = len(stock_codes)
@@ -244,7 +269,6 @@ class BacktestPipeline:
             log(f"[{i}/{total}] 获取回测历史: {code}")
             try:
                 df = self._get_hist_dataframe(
-                    ak,
                     symbol=symbol,
                     start_date=fetch_start.strftime("%Y%m%d"),
                     end_date=end.strftime("%Y%m%d"),
@@ -254,11 +278,15 @@ class BacktestPipeline:
                     log(f"  无历史数据: {code}")
                     continue
                 df = df.copy()
+                data_provider = df.attrs.get("data_provider", "unknown")
+                provider_adjustment = df.attrs.get("provider_adjustment", "qfq")
                 df["日期"] = pd.to_datetime(df["日期"])
                 df = df.sort_values("日期").set_index("日期")
                 df["收盘"] = pd.to_numeric(df["收盘"], errors="coerce")
                 df = df[df["收盘"].notna()]
                 if len(df) >= 60:
+                    df.attrs["data_provider"] = data_provider
+                    df.attrs["provider_adjustment"] = provider_adjustment
                     histories[code] = df
             except Exception as exc:
                 log(f"  获取失败: {code} - {exc}")
@@ -268,37 +296,24 @@ class BacktestPipeline:
 
     def _get_hist_dataframe(
         self,
-        ak,
         symbol: str,
         start_date: str,
         end_date: str,
         adjust: str,
     ) -> pd.DataFrame:
-        key = {
-            "api": "stock_zh_a_hist",
-            "symbol": symbol,
-            "period": "daily",
-            "start_date": start_date,
-            "end_date": end_date,
-            "adjust": adjust,
-        }
-
-        def fetch():
-            return ak.stock_zh_a_hist(
-                symbol=symbol,
-                period="daily",
-                start_date=start_date,
-                end_date=end_date,
-                adjust=adjust,
-            )
-
-        hist_df, cache_hit, cache_path = self.data_cache.get_or_fetch_dataframe(
-            "hist",
-            key,
-            fetch,
+        hist_df, provider, cache_hit, cache_path, primary_error = get_hist_dataframe_with_fallback(
+            data_cache=self.data_cache,
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            adjust=adjust,
         )
         if cache_hit:
-            log(f"  使用缓存回测日线: {symbol} ({cache_path})")
+            log(f"  使用缓存回测日线: {symbol} ({provider}, {cache_path})")
+        elif provider == "baostock":
+            log(f"  使用BaoStock回测日线: {symbol}")
+        elif provider == "yahoo":
+            log(f"  BaoStock失败，使用Yahoo回测日线: {symbol} ({primary_error})")
         return hist_df.copy()
 
     @staticmethod
@@ -397,21 +412,85 @@ class BacktestPipeline:
         else:
             list_dates = pd.Series(pd.NaT, index=stock_info.index)
         listed_mask = list_dates.isna() | (list_dates <= signal_date)
+
+        pool_entry_column = BacktestPipeline._first_existing_column(
+            stock_info,
+            BacktestPipeline.POOL_ENTRY_DATE_COLUMNS,
+        )
+        if pool_entry_column:
+            pool_entry_dates = pd.to_datetime(stock_info[pool_entry_column], errors="coerce")
+        else:
+            pool_entry_dates = pd.Series(pd.NaT, index=stock_info.index)
+        pool_entry_mask = pool_entry_dates.isna() | (pool_entry_dates <= signal_date)
+
         candidate_mask = pd.Series(True, index=stock_info.index)
 
         for stock_code, visible_date in candidate_visible_dates.items():
             if stock_code in candidate_mask.index and visible_date > signal_date:
                 candidate_mask.loc[stock_code] = False
 
-        visible_mask = listed_mask & candidate_mask
-        return stock_info.loc[visible_mask].copy(), {
+        visible_mask = listed_mask & pool_entry_mask & candidate_mask
+        visible_stock_info = stock_info.loc[visible_mask].copy()
+        visible_stock_info, classification_record = BacktestPipeline._mask_future_classifications(
+            visible_stock_info,
+            signal_date,
+        )
+        return visible_stock_info, {
             "signal_date": signal_date,
             "stock_pool_rows": len(stock_info),
             "eligible_universe_count": int(visible_mask.sum()),
             "excluded_not_listed_count": int((~listed_mask).sum()),
-            "excluded_llm_candidate_not_visible_count": int((listed_mask & ~candidate_mask).sum()),
+            "excluded_stock_pool_not_visible_count": int((listed_mask & ~pool_entry_mask).sum()),
+            "excluded_llm_candidate_not_visible_count": int((listed_mask & pool_entry_mask & ~candidate_mask).sum()),
             "missing_list_date_count": int(list_dates.isna().sum()),
+            "pool_entry_date_column": pool_entry_column or "",
+            "missing_pool_entry_date_count": int(pool_entry_dates.isna().sum()),
+            **classification_record,
         }
+
+    @staticmethod
+    def _history_provider_counts(histories: Dict[str, pd.DataFrame]) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for history in histories.values():
+            provider = str(history.attrs.get("data_provider", "unknown") or "unknown")
+            counts[provider] = counts.get(provider, 0) + 1
+        return counts
+
+    @staticmethod
+    def _mask_future_classifications(
+        stock_info: pd.DataFrame,
+        signal_date: pd.Timestamp,
+    ) -> Tuple[pd.DataFrame, Dict[str, object]]:
+        classification_column = BacktestPipeline._first_existing_column(
+            stock_info,
+            BacktestPipeline.INDUSTRY_AS_OF_DATE_COLUMNS,
+        )
+        if not classification_column:
+            return stock_info, {
+                "industry_as_of_date_column": "",
+                "future_industry_label_count": 0,
+                "missing_industry_as_of_date_count": len(stock_info),
+            }
+
+        classification_dates = pd.to_datetime(stock_info[classification_column], errors="coerce")
+        future_label_mask = classification_dates.notna() & (classification_dates > signal_date)
+        masked = stock_info.copy()
+        for column in ["sector", "sub_sector", "ai_exposure"]:
+            if column in masked.columns:
+                masked.loc[future_label_mask, column] = pd.NA
+
+        return masked, {
+            "industry_as_of_date_column": classification_column,
+            "future_industry_label_count": int(future_label_mask.sum()),
+            "missing_industry_as_of_date_count": int(classification_dates.isna().sum()),
+        }
+
+    @staticmethod
+    def _first_existing_column(stock_info: pd.DataFrame, columns: Tuple[str, ...]) -> Optional[str]:
+        for column in columns:
+            if column in stock_info.columns:
+                return column
+        return None
 
     @staticmethod
     def _normalize_visible_dates(candidate_visible_dates: Dict[str, str]) -> Dict[str, pd.Timestamp]:
@@ -548,6 +627,7 @@ class BacktestPipeline:
         point_in_time_report: pd.DataFrame,
         output_dir: str,
         run_config: Dict[str, object],
+        as_of_date: str,
         output_timestamp: str | None = None,
     ) -> Dict[str, str]:
         run_dir = create_timestamped_result_dir(output_dir, timestamp=output_timestamp)
@@ -558,11 +638,26 @@ class BacktestPipeline:
             "rebalances": str(run_dir / "backtest_rebalances.csv"),
             "point_in_time": str(run_dir / "backtest_point_in_time.csv"),
         }
-        pd.DataFrame([run_config]).to_csv(paths["config"], index=False)
-        summary.to_csv(paths["summary"], index=False)
-        equity_curve.to_csv(paths["equity"])
-        rebalances.to_csv(paths["rebalances"], index=False)
-        point_in_time_report.to_csv(paths["point_in_time"], index=False)
+        config = pd.DataFrame([run_config])
+        summary_output = summary.copy()
+        summary_output.insert(0, "as_of_date", as_of_date)
+
+        equity_output = equity_curve.copy()
+        equity_output.insert(0, "as_of_date", equity_output.index.strftime("%Y-%m-%d"))
+
+        rebalances_output = rebalances.copy()
+        if not rebalances_output.empty and "signal_date" in rebalances_output.columns:
+            rebalances_output.insert(0, "as_of_date", pd.to_datetime(rebalances_output["signal_date"]).dt.strftime("%Y-%m-%d"))
+
+        point_in_time_output = point_in_time_report.copy()
+        if not point_in_time_output.empty and "signal_date" in point_in_time_output.columns:
+            point_in_time_output.insert(0, "as_of_date", pd.to_datetime(point_in_time_output["signal_date"]).dt.strftime("%Y-%m-%d"))
+
+        config.to_csv(paths["config"], index=False)
+        summary_output.to_csv(paths["summary"], index=False)
+        equity_output.to_csv(paths["equity"])
+        rebalances_output.to_csv(paths["rebalances"], index=False)
+        point_in_time_output.to_csv(paths["point_in_time"], index=False)
         return paths
 
     @staticmethod

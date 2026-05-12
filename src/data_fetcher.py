@@ -2,7 +2,7 @@
 数据获取模块
 Data Fetching Module
 
-从akshare获取真实股票数据
+从统一 provider 链获取历史行情，并用 AkShare 补充实时估值/行情字段
 """
 
 import pandas as pd
@@ -16,6 +16,10 @@ import time
 
 from .data_cache import TmpDataCache
 from .market_features import calculate_price_features
+from .market_data_providers import (
+    get_hist_dataframe_with_fallback,
+    maybe_bypass_system_proxy,
+)
 
 # Use print for progress updates
 def log(msg):
@@ -31,7 +35,8 @@ def fetch_spot_dataframe_worker(result_path: str, conn) -> None:
     try:
         import akshare as ak
 
-        data = ak.stock_zh_a_spot_em()
+        with maybe_bypass_system_proxy():
+            data = ak.stock_zh_a_spot_em()
         if data is None or data.empty:
             conn.send(("error", "实时行情数据为空"))
             return
@@ -113,61 +118,55 @@ class StockDataFetcher:
     def _get_real_price_data(self, stock_codes: List[str], 
                              lookback_days: int) -> Dict[str, Dict]:
         """
-        从AkShare获取真实价格数据
-        
-        AkShare是完全开源免费的财经数据接口
+        从默认历史行情 provider 链获取真实价格数据。
         
         Raises:
             RuntimeError: 当无法获取任何股票数据时
         """
-        try:
-            import akshare as ak
-            
-            price_data = {}
-            failed_stocks = []
-            total = len(stock_codes)
-            
-            for i, code in enumerate(stock_codes, 1):
-                log(f"[{i}/{total}] 获取价格数据: {code}")
-                
-                # 转换股票代码格式 (000977.SZ -> 000977)
-                ts_code = code.replace('.SZ', '').replace('.SH', '')
-                
-                try:
-                    start_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y%m%d')
-                    end_date = datetime.now().strftime('%Y%m%d')
-                    df = self._get_hist_dataframe(
-                        ak,
-                        symbol=ts_code,
-                        start_date=start_date,
-                        end_date=end_date,
-                        adjust="qfq",
-                    )
-                    
-                    if df is None or len(df) == 0:
-                        log(f"  [{i}/{total}] 无数据: {code}")
-                        failed_stocks.append(code)
-                        continue
-                        
-                    features = calculate_price_features(df)
-                    price_data[code] = features
+        price_data = {}
+        failed_stocks = []
+        total = len(stock_codes)
 
-                    log(f"  [{i}/{total}] 完成: {code} (价格: {features['current_price']:.2f})")
-                        
-                except Exception as e:
-                    log(f"  [{i}/{total}] 失败: {code} - {str(e)}")
+        for i, code in enumerate(stock_codes, 1):
+            log(f"[{i}/{total}] 获取价格数据: {code}")
+
+            ts_code = code.replace('.SZ', '').replace('.SH', '')
+
+            try:
+                start_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y%m%d')
+                end_date = datetime.now().strftime('%Y%m%d')
+                df = self._get_hist_dataframe(
+                    symbol=ts_code,
+                    start_date=start_date,
+                    end_date=end_date,
+                    adjust="qfq",
+                )
+
+                if df is None or len(df) == 0:
+                    log(f"  [{i}/{total}] 无数据: {code}")
                     failed_stocks.append(code)
-                    
-            if failed_stocks:
-                log(f"警告: {len(failed_stocks)} 只股票无法获取价格数据: {', '.join(failed_stocks[:5])}...")
-                if len(failed_stocks) == len(stock_codes):
-                    raise RuntimeError("无法获取任何股票的价格数据")
-                    
-            return price_data
-            
-        except ImportError:
-            log("错误: 未安装akshare，请运行: pip install akshare")
-            raise ImportError("akshare未安装，请先安装: pip install akshare")
+                    continue
+
+                features = calculate_price_features(df)
+                features["data_provider"] = df.attrs.get("data_provider", "unknown")
+                features["provider_adjustment"] = df.attrs.get("provider_adjustment", "qfq")
+                price_data[code] = features
+
+                log(
+                    f"  [{i}/{total}] 完成: {code} "
+                    f"(价格: {features['current_price']:.2f}, 数据源: {features['data_provider']})"
+                )
+
+            except Exception as e:
+                log(f"  [{i}/{total}] 失败: {code} - {str(e)}")
+                failed_stocks.append(code)
+
+        if failed_stocks:
+            log(f"警告: {len(failed_stocks)} 只股票无法获取价格数据: {', '.join(failed_stocks[:5])}...")
+            if len(failed_stocks) == len(stock_codes):
+                raise RuntimeError("无法获取任何股票的价格数据")
+
+        return price_data
     
     
     def get_financial_data(self, stock_codes: List[str]) -> Dict[str, Dict]:
@@ -423,7 +422,8 @@ class StockDataFetcher:
 
         spot_timeout = int(os.environ.get("QUANT_SPOT_TIMEOUT_SECONDS", "120"))
         if spot_timeout <= 0:
-            spot_df = ak.stock_zh_a_spot_em()
+            with maybe_bypass_system_proxy():
+                spot_df = ak.stock_zh_a_spot_em()
             self.data_cache.set_dataframe("spot", key, spot_df)
             return spot_df.copy()
 
@@ -476,35 +476,22 @@ class StockDataFetcher:
 
     def _get_hist_dataframe(
         self,
-        ak,
         symbol: str,
         start_date: str,
         end_date: str,
         adjust: str,
     ) -> pd.DataFrame:
-        key = {
-            "api": "stock_zh_a_hist",
-            "symbol": symbol,
-            "period": "daily",
-            "start_date": start_date,
-            "end_date": end_date,
-            "adjust": adjust,
-        }
-
-        def fetch():
-            return ak.stock_zh_a_hist(
-                symbol=symbol,
-                period="daily",
-                start_date=start_date,
-                end_date=end_date,
-                adjust=adjust,
-            )
-
-        hist_df, cache_hit, cache_path = self.data_cache.get_or_fetch_dataframe(
-            "hist",
-            key,
-            fetch,
+        hist_df, provider, cache_hit, cache_path, primary_error = get_hist_dataframe_with_fallback(
+            data_cache=self.data_cache,
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            adjust=adjust,
         )
         if cache_hit:
-            log(f"  使用缓存日线: {symbol} ({cache_path})")
+            log(f"  使用缓存日线: {symbol} ({provider}, {cache_path})")
+        elif provider == "baostock":
+            log(f"  使用BaoStock日线: {symbol}")
+        elif provider == "yahoo":
+            log(f"  BaoStock失败，使用Yahoo备用源: {symbol} ({primary_error})")
         return hist_df.copy()

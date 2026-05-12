@@ -44,10 +44,17 @@ def write_training_data(
     output_path.mkdir(parents=True, exist_ok=False)
 
     stock_pool = pd.read_csv(csv_path, encoding="utf-8-sig")
+    as_of_date = _backtest_as_of_date(backtest_result)
     ranking_features = ranking.reset_index().rename(columns={"index": "stock_code"})
     allocation_labels = allocation.reset_index().rename(columns={"index": "stock_code"})
     rebalances = backtest_result["rebalances"].copy()
     equity_curve = backtest_result["equity_curve"].reset_index()
+
+    stock_pool = _ensure_as_of_date(stock_pool, as_of_date)
+    ranking_features = _ensure_as_of_date(ranking_features, as_of_date)
+    allocation_labels = _ensure_as_of_date(allocation_labels, as_of_date)
+    rebalances = _ensure_as_of_date(rebalances, "signal_date")
+    equity_curve = _ensure_as_of_date(equity_curve, "date")
 
     stock_pool_path = output_path / "stock_pool_snapshot.csv"
     ranking_features_path = output_path / "ranking_features.csv"
@@ -66,6 +73,7 @@ def write_training_data(
         "schema_version": "1.0",
         "run_id": run_id,
         "created_at": datetime.now().isoformat(timespec="seconds"),
+        "as_of_date": as_of_date,
         "git_commit": current_git_commit(Path(__file__).resolve().parents[1]),
         "stock_pool": describe_stock_pool(csv_path),
         "rows": {
@@ -108,6 +116,7 @@ def write_merged_scores(
     allocation_frame = allocation[["target_weight", "position_value", "recommendation"]].reset_index()
     allocation_frame = allocation_frame.rename(columns={"index": "stock_code"})
     merged = ranking_frame.merge(allocation_frame, on="stock_code", how="left")
+    merged = _ensure_as_of_date(merged, _backtest_as_of_date(backtest_result))
 
     rebalances = backtest_result["rebalances"]
     if not rebalances.empty and "stock_code" in rebalances.columns:
@@ -185,6 +194,7 @@ def write_reconciliation_data(
     rebalance_codes = set(rebalances["stock_code"]) if "stock_code" in rebalances.columns else set()
 
     stock_reconciliation = stock_pool.copy()
+    stock_reconciliation = _ensure_as_of_date(stock_reconciliation, _backtest_as_of_date(backtest_result))
     stock_reconciliation["in_ranking"] = stock_reconciliation["stock_code"].isin(ranking_codes)
     stock_reconciliation["in_allocation"] = stock_reconciliation["stock_code"].isin(allocation_codes)
     stock_reconciliation["in_backtest_rebalances"] = stock_reconciliation["stock_code"].isin(rebalance_codes)
@@ -201,7 +211,7 @@ def write_reconciliation_data(
         _check("research_ledger_files", len(research_paths), len(research_paths) > 0),
     ]
     checks_path = output_path / "run_checks.csv"
-    pd.DataFrame(checks).to_csv(checks_path, index=False)
+    pd.DataFrame(checks).pipe(_ensure_as_of_date, _backtest_as_of_date(backtest_result)).to_csv(checks_path, index=False)
 
     artifact_paths = {
         **{f"primary_{key}": value for key, value in primary_result_paths.items()},
@@ -217,13 +227,14 @@ def write_reconciliation_data(
 
     manifest_path = output_path / "file_manifest.csv"
     manifest = _file_manifest_rows(artifact_paths)
-    pd.DataFrame(manifest).to_csv(manifest_path, index=False)
+    pd.DataFrame(manifest).pipe(_ensure_as_of_date, _backtest_as_of_date(backtest_result)).to_csv(manifest_path, index=False)
 
     summary_path = output_path / "summary.json"
     summary = {
         "schema_version": "1.0",
         "run_id": run_id,
         "created_at": datetime.now().isoformat(timespec="seconds"),
+        "as_of_date": _backtest_as_of_date(backtest_result),
         "git_commit": current_git_commit(Path(__file__).resolve().parents[1]),
         "stock_pool": describe_stock_pool(csv_path),
         "checks_passed": all(row["status"] == "pass" for row in checks),
@@ -259,6 +270,7 @@ def write_run_manifest(
         "schema_version": "1.0",
         "run_id": run_id,
         "created_at": datetime.now().isoformat(timespec="seconds"),
+        "as_of_date": _manifest_as_of_date(backtest_paths),
         "git_commit": current_git_commit(Path(__file__).resolve().parents[1]),
         "stock_pool": describe_stock_pool(csv_path),
         "primary_results": primary_result_paths,
@@ -304,6 +316,7 @@ def _file_manifest_rows(paths: Dict[str, str]) -> List[Dict[str, object]]:
                 row_count = ""
         rows.append(
             {
+                "as_of_date": datetime.now().date().isoformat(),
                 "artifact": name,
                 "path": str(path),
                 "sha256": file_sha256(path),
@@ -312,3 +325,37 @@ def _file_manifest_rows(paths: Dict[str, str]) -> List[Dict[str, object]]:
             }
         )
     return rows
+
+
+def _ensure_as_of_date(frame: pd.DataFrame, source: str) -> pd.DataFrame:
+    output = frame.copy()
+    if "as_of_date" in output.columns:
+        return output
+    if source in output.columns:
+        values = pd.to_datetime(output[source], errors="coerce").dt.strftime("%Y-%m-%d")
+        output.insert(0, "as_of_date", values.fillna(""))
+    else:
+        output.insert(0, "as_of_date", source)
+    return output
+
+
+def _backtest_as_of_date(backtest_result: Dict[str, object]) -> str:
+    equity_curve = backtest_result.get("equity_curve")
+    if isinstance(equity_curve, pd.DataFrame) and not equity_curve.empty:
+        try:
+            return pd.Timestamp(equity_curve.index.max()).strftime("%Y-%m-%d")
+        except Exception:
+            pass
+    return datetime.now().date().isoformat()
+
+
+def _manifest_as_of_date(backtest_paths: Dict[str, str]) -> str:
+    summary_path = Path(backtest_paths.get("summary", ""))
+    if summary_path.exists():
+        try:
+            summary = pd.read_csv(summary_path)
+            if "as_of_date" in summary.columns and not summary.empty:
+                return str(summary["as_of_date"].dropna().iloc[0])
+        except Exception:
+            pass
+    return datetime.now().date().isoformat()

@@ -101,6 +101,7 @@ def create_research_ledger(
         "schema_version": "1.0",
         "title": title,
         "created_at": created_at,
+        "as_of_date": news_window_end,
         "generated_by": "ai-upstream-stock-research",
         "git_commit": current_git_commit(Path(__file__).resolve().parents[1]),
         "news_window": {
@@ -122,8 +123,8 @@ def create_research_ledger(
         json.dumps(ledger, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    _write_candidates_csv(candidates_path, candidates)
-    _write_sources_csv(sources_path, candidates)
+    _write_candidates_csv(candidates_path, candidates, news_window_end)
+    _write_sources_csv(sources_path, candidates, news_window_end)
     _write_notes(notes_path, title, news_window_start, news_window_end, notes)
 
     return {
@@ -147,8 +148,9 @@ def _summary(candidates: Iterable[Dict[str, Any]]) -> Dict[str, int]:
     }
 
 
-def _write_candidates_csv(path: Path, candidates: List[Dict[str, Any]]) -> None:
+def _write_candidates_csv(path: Path, candidates: List[Dict[str, Any]], default_as_of_date: str) -> None:
     fields = [
+        "as_of_date",
         "stock_code",
         "stock_name",
         "decision",
@@ -171,6 +173,7 @@ def _write_candidates_csv(path: Path, candidates: List[Dict[str, Any]]) -> None:
             evidence = _evidence_items(candidate)
             writer.writerow(
                 {
+                    "as_of_date": _candidate_as_of_date(candidate, default_as_of_date),
                     "stock_code": candidate.get("stock_code", ""),
                     "stock_name": candidate.get("stock_name", ""),
                     "decision": candidate.get("decision", "watchlist"),
@@ -189,8 +192,9 @@ def _write_candidates_csv(path: Path, candidates: List[Dict[str, Any]]) -> None:
             )
 
 
-def _write_sources_csv(path: Path, candidates: List[Dict[str, Any]]) -> None:
+def _write_sources_csv(path: Path, candidates: List[Dict[str, Any]], default_as_of_date: str) -> None:
     fields = [
+        "as_of_date",
         "stock_code",
         "stock_name",
         "source_title",
@@ -207,6 +211,7 @@ def _write_sources_csv(path: Path, candidates: List[Dict[str, Any]]) -> None:
             for source in _evidence_items(candidate):
                 writer.writerow(
                     {
+                        "as_of_date": source.get("published_at") or _candidate_as_of_date(candidate, default_as_of_date),
                         "stock_code": candidate.get("stock_code", ""),
                         "stock_name": candidate.get("stock_name", ""),
                         "source_title": source.get("title", ""),
@@ -244,3 +249,12 @@ def _join_path(value: Any) -> str:
     if isinstance(value, list):
         return " -> ".join(str(item) for item in value)
     return str(value or "")
+
+
+def _candidate_as_of_date(candidate: Dict[str, Any], default_as_of_date: str) -> str:
+    return str(
+        candidate.get("as_of_date")
+        or candidate.get("visible_date")
+        or candidate.get("decision_date")
+        or default_as_of_date
+    )

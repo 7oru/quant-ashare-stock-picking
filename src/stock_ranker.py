@@ -65,6 +65,7 @@ class StockRanker:
             output_dir = output_path.parent
         self.last_output_dir = output_dir
         self.last_output_path = output_path
+        run_as_of_date = datetime.now().date().isoformat()
         
         # 1. 加载股票池
         stock_info = pd.read_csv(csv_path, index_col='stock_code')
@@ -72,6 +73,7 @@ class StockRanker:
         log(f"加载股票数量: {len(stock_codes)}")
         run_config = {
             "run_type": "ranking",
+            "as_of_date": run_as_of_date,
             "total_capital": total_capital,
             "lookback_days": lookback_days,
             "output_path": str(output_path),
@@ -120,6 +122,12 @@ class StockRanker:
             'valuation_score': factors['valuation_score'],
             'quality_score': factors['quality_score'],
             'volatility_score': factors['volatility_score'],
+            'data_provider': pd.Series(
+                {code: price_data.get(code, {}).get('data_provider', 'unknown') for code in factors.index}
+            ),
+            'provider_adjustment': pd.Series(
+                {code: price_data.get(code, {}).get('provider_adjustment', '') for code in factors.index}
+            ),
         }
         optional_columns = [
             'liquidity_score',
@@ -145,9 +153,13 @@ class StockRanker:
         
         # 8. 输出结果
         log(f"保存结果到: {output_path}")
-        allocation.to_csv(output_path)
+        allocation_output = allocation.copy()
+        allocation_output.insert(0, "as_of_date", run_as_of_date)
+        allocation_output.to_csv(output_path)
         ranking_scores_path = output_dir / "ranking_scores.csv"
-        ranking.to_csv(ranking_scores_path)
+        ranking_output = ranking.copy()
+        ranking_output.insert(0, "as_of_date", run_as_of_date)
+        ranking_output.to_csv(ranking_scores_path)
         log(f"保存排名得分到: {ranking_scores_path}")
         
         # 汇总信息
