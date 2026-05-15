@@ -84,6 +84,7 @@ class BacktestPipeline:
         equity_records = []
         rebalance_records = []
         point_in_time_records = []
+        factor_signal_records = []
 
         for i, signal_date in enumerate(rebalance_dates):
             signal_loc = calendar.get_loc(signal_date)
@@ -129,6 +130,16 @@ class BacktestPipeline:
             weights = self._target_weights(ranking, top_n)
             selected_returns = stock_returns.reindex(columns=weights.index).loc[trade_dates].fillna(0)
             holding_returns = (1 + selected_returns).prod() - 1
+            universe_returns = (1 + stock_returns.reindex(columns=ranking.index).loc[trade_dates].fillna(0)).prod() - 1
+            factor_signal_records.extend(
+                self._factor_signal_records(
+                    signal_date=signal_date,
+                    ranking=ranking,
+                    factors=factors,
+                    forward_returns=universe_returns,
+                    selected_weights=weights,
+                )
+            )
             benchmark_period_returns = (
                 stock_returns.reindex(columns=visible_stock_info.index)
                 .loc[trade_dates]
@@ -202,6 +213,8 @@ class BacktestPipeline:
         )
         rebalances = pd.DataFrame(rebalance_records)
         point_in_time_report = pd.DataFrame(point_in_time_records)
+        factor_signals = pd.DataFrame(factor_signal_records)
+        factor_diagnostics, factor_diagnostics_summary = self._factor_diagnostics(factor_signals, rebalances)
         summary = self._summary(equity_curve, initial_capital, len(rebalance_dates))
 
         run_config = {
@@ -239,6 +252,8 @@ class BacktestPipeline:
             equity_curve,
             rebalances,
             point_in_time_report,
+            factor_diagnostics,
+            factor_diagnostics_summary,
             output_dir,
             run_config,
             as_of_date=end_date,
@@ -249,6 +264,8 @@ class BacktestPipeline:
             "equity_curve": equity_curve,
             "rebalances": rebalances,
             "point_in_time_report": point_in_time_report,
+            "factor_diagnostics": factor_diagnostics,
+            "factor_diagnostics_summary": factor_diagnostics_summary,
             "paths": paths,
             "output_dir": str(Path(paths["summary"]).parent),
         }
@@ -521,6 +538,7 @@ class BacktestPipeline:
                 "sector": stock_info["sector"],
                 "sub_sector": stock_info["sub_sector"],
                 "ai_exposure": stock_info["ai_exposure"],
+                "market_cap": stock_info.get("market_cap", pd.Series(pd.NA, index=stock_info.index)),
                 "composite_score": composite_score,
                 "momentum_score": factors["momentum_score"],
                 "growth_score": factors["growth_score"],
@@ -532,6 +550,303 @@ class BacktestPipeline:
         ).sort_values("composite_score", ascending=False)
         ranking["rank"] = range(1, len(ranking) + 1)
         return ranking
+
+    @staticmethod
+    def _factor_signal_records(
+        *,
+        signal_date: pd.Timestamp,
+        ranking: pd.DataFrame,
+        factors: pd.DataFrame,
+        forward_returns: pd.Series,
+        selected_weights: pd.Series,
+    ) -> List[Dict[str, object]]:
+        factor_columns = [
+            "composite_score",
+            "momentum_score",
+            "growth_score",
+            "valuation_score",
+            "quality_score",
+            "volatility_score",
+            "liquidity_score",
+        ]
+        records = []
+        selected_set = set(selected_weights.index)
+        for stock_code, row in ranking.iterrows():
+            record = {
+                "signal_date": signal_date,
+                "stock_code": stock_code,
+                "forward_return": forward_returns.get(stock_code, np.nan),
+                "rank": row.get("rank"),
+                "selected": stock_code in selected_set,
+                "target_weight": selected_weights.get(stock_code, 0.0),
+                "sector": row.get("sector"),
+                "sub_sector": row.get("sub_sector"),
+                "market_cap": row.get("market_cap"),
+                "ai_exposure": row.get("ai_exposure"),
+            }
+            for column in factor_columns:
+                if column == "composite_score":
+                    record[column] = row.get(column)
+                else:
+                    record[column] = factors.get(column, pd.Series(dtype="float64")).get(stock_code, np.nan)
+            records.append(record)
+        return records
+
+    @staticmethod
+    def _factor_diagnostics(
+        factor_signals: pd.DataFrame,
+        rebalances: pd.DataFrame,
+    ) -> Tuple[pd.DataFrame, str]:
+        factor_columns = [
+            "composite_score",
+            "momentum_score",
+            "growth_score",
+            "valuation_score",
+            "quality_score",
+            "volatility_score",
+            "liquidity_score",
+        ]
+        rows = []
+        if factor_signals.empty:
+            diagnostics = pd.DataFrame(
+                columns=["metric", "factor", "group_type", "group_value", "value", "observations", "periods", "notes"]
+            )
+            return diagnostics, BacktestPipeline._factor_diagnostics_markdown(diagnostics)
+
+        for factor in factor_columns:
+            ic_values = []
+            monotonic_flags = []
+            spread_values = []
+            for signal_date, group in factor_signals.groupby("signal_date"):
+                valid = group[[factor, "forward_return"]].dropna()
+                if len(valid) < 3 or valid[factor].nunique() < 2 or valid["forward_return"].nunique() < 2:
+                    continue
+                ic = valid[factor].rank().corr(valid["forward_return"].rank())
+                if pd.notna(ic):
+                    ic_values.append(float(ic))
+
+                quantiles = BacktestPipeline._quantile_returns(valid[factor], valid["forward_return"], buckets=5)
+                if len(quantiles) >= 2:
+                    first = quantiles.iloc[0]
+                    last = quantiles.iloc[-1]
+                    spread_values.append(float(last - first))
+                    monotonic_flags.append(bool(quantiles.is_monotonic_increasing or quantiles.is_monotonic_decreasing))
+
+            rows.append(
+                {
+                    "metric": "rank_ic_mean",
+                    "factor": factor,
+                    "group_type": "",
+                    "group_value": "",
+                    "value": float(np.mean(ic_values)) if ic_values else np.nan,
+                    "observations": len(ic_values),
+                    "periods": factor_signals["signal_date"].nunique(),
+                    "notes": "Spearman rank correlation between factor score and next holding-period return.",
+                }
+            )
+            rows.append(
+                {
+                    "metric": "icir",
+                    "factor": factor,
+                    "group_type": "",
+                    "group_value": "",
+                    "value": BacktestPipeline._icir(ic_values),
+                    "observations": len(ic_values),
+                    "periods": factor_signals["signal_date"].nunique(),
+                    "notes": "Mean Rank IC divided by Rank IC standard deviation.",
+                }
+            )
+            rows.append(
+                {
+                    "metric": "quantile_spread_top_minus_bottom",
+                    "factor": factor,
+                    "group_type": "",
+                    "group_value": "",
+                    "value": float(np.mean(spread_values)) if spread_values else np.nan,
+                    "observations": len(spread_values),
+                    "periods": factor_signals["signal_date"].nunique(),
+                    "notes": "Average top-minus-bottom factor quantile forward return spread.",
+                }
+            )
+            rows.append(
+                {
+                    "metric": "monotonicity_rate",
+                    "factor": factor,
+                    "group_type": "",
+                    "group_value": "",
+                    "value": float(np.mean(monotonic_flags)) if monotonic_flags else np.nan,
+                    "observations": len(monotonic_flags),
+                    "periods": factor_signals["signal_date"].nunique(),
+                    "notes": "Share of periods where factor quantile returns are monotonic.",
+                }
+            )
+
+        rows.extend(BacktestPipeline._portfolio_diagnostic_rows(factor_signals, rebalances))
+        rows.extend(BacktestPipeline._group_stability_rows(factor_signals))
+        diagnostics = pd.DataFrame(rows)
+        return diagnostics, BacktestPipeline._factor_diagnostics_markdown(diagnostics)
+
+    @staticmethod
+    def _quantile_returns(scores: pd.Series, returns: pd.Series, buckets: int = 5) -> pd.Series:
+        frame = pd.DataFrame({"score": scores, "return": returns}).dropna()
+        if len(frame) < buckets or frame["score"].nunique() < 2:
+            return pd.Series(dtype="float64")
+        bucket_count = min(buckets, frame["score"].nunique(), len(frame))
+        try:
+            frame["bucket"] = pd.qcut(frame["score"].rank(method="first"), bucket_count, labels=False, duplicates="drop")
+        except ValueError:
+            return pd.Series(dtype="float64")
+        return frame.groupby("bucket")["return"].mean().sort_index()
+
+    @staticmethod
+    def _icir(ic_values: List[float]) -> float:
+        if len(ic_values) < 2:
+            return np.nan
+        std = np.std(ic_values, ddof=1)
+        if std <= 0 or pd.isna(std):
+            return np.nan
+        return float(np.mean(ic_values) / std)
+
+    @staticmethod
+    def _portfolio_diagnostic_rows(factor_signals: pd.DataFrame, rebalances: pd.DataFrame) -> List[Dict[str, object]]:
+        rows = []
+        periods = factor_signals["signal_date"].nunique() if not factor_signals.empty else 0
+        if "selected" in factor_signals.columns:
+            selected_returns = factor_signals.loc[factor_signals["selected"], "forward_return"].dropna()
+            rows.append(
+                {
+                    "metric": "selected_avg_forward_return",
+                    "factor": "portfolio",
+                    "group_type": "",
+                    "group_value": "",
+                    "value": float(selected_returns.mean()) if len(selected_returns) else np.nan,
+                    "observations": int(len(selected_returns)),
+                    "periods": periods,
+                    "notes": "Average holding-period return for selected names.",
+                }
+            )
+
+        turnover_values = []
+        if rebalances is not None and not rebalances.empty and {"signal_date", "stock_code", "target_weight"}.issubset(rebalances.columns):
+            previous = pd.Series(dtype="float64")
+            for _, group in rebalances.groupby("signal_date", sort=True):
+                current = group.set_index("stock_code")["target_weight"].astype(float)
+                turnover_values.append(BacktestPipeline._turnover(previous, current))
+                previous = current
+        rows.append(
+            {
+                "metric": "avg_turnover",
+                "factor": "portfolio",
+                "group_type": "",
+                "group_value": "",
+                "value": float(np.mean(turnover_values)) if turnover_values else np.nan,
+                "observations": len(turnover_values),
+                "periods": periods,
+                "notes": "Average one-way absolute target-weight change across rebalance dates.",
+            }
+        )
+
+        decay_rows = BacktestPipeline._holding_decay_rows(factor_signals)
+        rows.extend(decay_rows)
+        return rows
+
+    @staticmethod
+    def _holding_decay_rows(factor_signals: pd.DataFrame) -> List[Dict[str, object]]:
+        rows = []
+        selected = factor_signals.loc[factor_signals.get("selected", False) == True] if not factor_signals.empty else pd.DataFrame()
+        if selected.empty:
+            return rows
+        periods = sorted(pd.to_datetime(selected["signal_date"]).dropna().unique())
+        period_returns = (
+            selected.groupby("signal_date")["forward_return"].mean().sort_index().reset_index(drop=True)
+        )
+        for lag in [1, 2, 3]:
+            if len(period_returns) <= lag + 1:
+                value = np.nan
+                observations = 0
+            else:
+                value = period_returns.autocorr(lag=lag)
+                observations = int(len(period_returns) - lag)
+            rows.append(
+                {
+                    "metric": f"holding_return_autocorr_lag_{lag}",
+                    "factor": "portfolio",
+                    "group_type": "",
+                    "group_value": "",
+                    "value": float(value) if pd.notna(value) else np.nan,
+                    "observations": observations,
+                    "periods": len(periods),
+                    "notes": "Autocorrelation of selected basket average forward returns; lower values suggest faster signal decay.",
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _group_stability_rows(factor_signals: pd.DataFrame) -> List[Dict[str, object]]:
+        rows = []
+        if factor_signals.empty:
+            return rows
+
+        periods = factor_signals["signal_date"].nunique()
+        group_columns = [
+            ("sector", "行业"),
+            ("market_cap", "市值"),
+            ("ai_exposure", "AI 暴露"),
+        ]
+        for column, label in group_columns:
+            if column not in factor_signals.columns:
+                continue
+            group_values = factor_signals[column].fillna("unknown").replace("", "unknown")
+            for group_value, group in factor_signals.assign(_group_value=group_values).groupby("_group_value"):
+                valid_returns = group["forward_return"].dropna()
+                rows.append(
+                    {
+                        "metric": "group_avg_forward_return",
+                        "factor": "portfolio",
+                        "group_type": column,
+                        "group_value": group_value,
+                        "value": float(valid_returns.mean()) if len(valid_returns) else np.nan,
+                        "observations": int(len(valid_returns)),
+                        "periods": int(group["signal_date"].nunique()),
+                        "notes": f"Average next holding-period return by {label} group.",
+                    }
+                )
+                selected = group["selected"].dropna() if "selected" in group.columns else pd.Series(dtype="bool")
+                rows.append(
+                    {
+                        "metric": "group_selected_rate",
+                        "factor": "portfolio",
+                        "group_type": column,
+                        "group_value": group_value,
+                        "value": float(selected.astype(bool).mean()) if len(selected) else np.nan,
+                        "observations": int(len(selected)),
+                        "periods": int(group["signal_date"].nunique()),
+                        "notes": f"Share of observations selected within {label} group.",
+                    }
+                )
+        return rows
+
+    @staticmethod
+    def _factor_diagnostics_markdown(diagnostics: pd.DataFrame) -> str:
+        lines = [
+            "# Factor Diagnostics",
+            "",
+            "Diagnostics are calculated from each rebalance signal date and the next holding-period return.",
+            "",
+            "| Metric | Factor | Group | Value | Observations | Notes |",
+            "| --- | --- | --- | ---: | ---: | --- |",
+        ]
+        for _, row in diagnostics.iterrows():
+            value = row.get("value")
+            value_text = "" if pd.isna(value) else f"{float(value):.6f}"
+            group_type = row.get("group_type", "")
+            group_value = row.get("group_value", "")
+            group_text = "" if not group_type else f"{group_type}={group_value}"
+            lines.append(
+                f"| {row.get('metric')} | {row.get('factor')} | {group_text} | {value_text} | {int(row.get('observations', 0))} | {row.get('notes')} |"
+            )
+        lines.append("")
+        return "\n".join(lines)
 
     def _target_weights(self, ranking: pd.DataFrame, top_n: int) -> pd.Series:
         selected = ranking.head(top_n).copy()
@@ -625,6 +940,8 @@ class BacktestPipeline:
         equity_curve: pd.DataFrame,
         rebalances: pd.DataFrame,
         point_in_time_report: pd.DataFrame,
+        factor_diagnostics: pd.DataFrame,
+        factor_diagnostics_summary: str,
         output_dir: str,
         run_config: Dict[str, object],
         as_of_date: str,
@@ -637,10 +954,15 @@ class BacktestPipeline:
             "equity": str(run_dir / "backtest_equity.csv"),
             "rebalances": str(run_dir / "backtest_rebalances.csv"),
             "point_in_time": str(run_dir / "backtest_point_in_time.csv"),
+            "factor_lineage": str(run_dir / "backtest_factor_lineage.csv"),
+            "factor_lineage_notes": str(run_dir / "backtest_factor_lineage.md"),
+            "factor_diagnostics": str(run_dir / "factor_diagnostics.csv"),
+            "factor_diagnostics_summary": str(run_dir / "factor_diagnostics.md"),
         }
         config = pd.DataFrame([run_config])
         summary_output = summary.copy()
         summary_output.insert(0, "as_of_date", as_of_date)
+        factor_lineage = BacktestPipeline._factor_lineage(as_of_date)
 
         equity_output = equity_curve.copy()
         equity_output.insert(0, "as_of_date", equity_output.index.strftime("%Y-%m-%d"))
@@ -658,7 +980,107 @@ class BacktestPipeline:
         equity_output.to_csv(paths["equity"])
         rebalances_output.to_csv(paths["rebalances"], index=False)
         point_in_time_output.to_csv(paths["point_in_time"], index=False)
+        factor_lineage.to_csv(paths["factor_lineage"], index=False)
+        Path(paths["factor_lineage_notes"]).write_text(
+            BacktestPipeline._factor_lineage_markdown(factor_lineage),
+            encoding="utf-8",
+        )
+        factor_diagnostics_output = factor_diagnostics.copy()
+        if "as_of_date" not in factor_diagnostics_output.columns:
+            factor_diagnostics_output.insert(0, "as_of_date", as_of_date)
+        factor_diagnostics_output.to_csv(paths["factor_diagnostics"], index=False)
+        Path(paths["factor_diagnostics_summary"]).write_text(
+            factor_diagnostics_summary,
+            encoding="utf-8",
+        )
         return paths
+
+    @staticmethod
+    def _factor_lineage(as_of_date: str) -> pd.DataFrame:
+        rows = [
+            {
+                "as_of_date": as_of_date,
+                "item": "momentum_score",
+                "point_in_time_status": "strict_point_in_time",
+                "source": "daily history sliced to signal_date",
+                "inputs": "returns_5d|returns_20d|returns_60d|return_acceleration|ma20_distance|macd_signal|trend_strength|rsi|stoch",
+                "notes": "Only price rows at or before each signal_date are used.",
+            },
+            {
+                "as_of_date": as_of_date,
+                "item": "volatility_score",
+                "point_in_time_status": "strict_point_in_time",
+                "source": "daily history sliced to signal_date",
+                "inputs": "volatility|downside_volatility|max_drawdown|atr_percent|bb_width|amplitude",
+                "notes": "Risk features are calculated from the rolling historical window visible at signal_date.",
+            },
+            {
+                "as_of_date": as_of_date,
+                "item": "liquidity_score",
+                "point_in_time_status": "strict_point_in_time_with_missing_current_fields",
+                "source": "daily history sliced to signal_date",
+                "inputs": "turnover_rate|volume_ratio|volume_momentum|amount|market_cap",
+                "notes": "Turnover, volume, and amount are point-in-time daily fields; current market-cap fields are null in backtest and do not use revised/current snapshots.",
+            },
+            {
+                "as_of_date": as_of_date,
+                "item": "growth_score",
+                "point_in_time_status": "proxy_point_in_time",
+                "source": "price-derived proxy",
+                "inputs": "returns_ytd|momentum_120d|risk_adjusted_momentum|revenue_growth|profit_growth|net_profit_margin",
+                "notes": "Fundamental growth inputs are null in backtest; score falls back to price-derived point-in-time proxies.",
+            },
+            {
+                "as_of_date": as_of_date,
+                "item": "valuation_score",
+                "point_in_time_status": "current_fundamental_data_disabled",
+                "source": "neutral fallback",
+                "inputs": "pe|pb|ps|pcf|peg",
+                "notes": "Current/revised valuation fields are intentionally null in backtest, so this score is neutral unless a true point-in-time fundamental source is added later.",
+            },
+            {
+                "as_of_date": as_of_date,
+                "item": "quality_score",
+                "point_in_time_status": "proxy_point_in_time",
+                "source": "risk/liquidity fallback",
+                "inputs": "roe|gross_margin|net_profit_margin|cash_quality|valuation_score|volatility_score|liquidity_score",
+                "notes": "Fundamental quality inputs are null in backtest; score uses the model's proxy fallback from valuation/risk/liquidity scores.",
+            },
+            {
+                "as_of_date": as_of_date,
+                "item": "industry_adjustment",
+                "point_in_time_status": "conditional_point_in_time",
+                "source": "stock pool classification metadata",
+                "inputs": "sector|industry_as_of_date|classification_as_of_date|sector_as_of_date",
+                "notes": "Industry labels are masked when their as-of date is after signal_date. If the stock pool has no label as-of column, labels are current snapshot proxies and this is reported in backtest_point_in_time.csv.",
+            },
+            {
+                "as_of_date": as_of_date,
+                "item": "composite_score",
+                "point_in_time_status": "mixed",
+                "source": "weighted factor scores",
+                "inputs": "momentum_score|quality_score|growth_score|valuation_score|volatility_score|liquidity_score",
+                "notes": "Composite score mixes strict point-in-time price/risk/liquidity signals with explicit proxy or neutral fundamental components.",
+            },
+        ]
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def _factor_lineage_markdown(factor_lineage: pd.DataFrame) -> str:
+        lines = [
+            "# Backtest Factor Lineage",
+            "",
+            "This report marks whether each backtest signal is strict point-in-time data, a point-in-time proxy, or a disabled/current-data placeholder.",
+            "",
+            "| Item | Status | Source | Notes |",
+            "| --- | --- | --- | --- |",
+        ]
+        for _, row in factor_lineage.iterrows():
+            lines.append(
+                f"| {row['item']} | {row['point_in_time_status']} | {row['source']} | {row['notes']} |"
+            )
+        lines.append("")
+        return "\n".join(lines)
 
     @staticmethod
     def _number(value) -> float:

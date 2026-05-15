@@ -71,7 +71,11 @@ results/
     ├── backtest_summary.csv
     ├── backtest_equity.csv
     ├── backtest_rebalances.csv
-    └── backtest_point_in_time.csv
+    ├── backtest_point_in_time.csv
+    ├── backtest_factor_lineage.csv
+    ├── backtest_factor_lineage.md
+    ├── factor_diagnostics.csv
+    └── factor_diagnostics.md
 ```
 
 如果同一秒内多次运行，会自动追加 `_01`、`_02` 之类的后缀，避免覆盖已有结果。
@@ -199,6 +203,10 @@ python backtest_pipeline.py \
 
 主要 CSV 输出都会写入 `as_of_date` 或等价日期字段。排名结果使用运行日作为数据快照日期；回测摘要使用回测结束日，净值表按交易日，调仓和点时报告按信号日；研究账本候选和来源表默认使用 `news_window_end`，若候选或来源自身带有日期则优先保留。这样后续训练、对账和复盘时可以区分“这行数据代表哪个时点”和“文件是什么时候生成的”。
 
+每次回测还会写出 `backtest_factor_lineage.csv` 和 `backtest_factor_lineage.md`，显式标记各类信号的数据血缘：动量和波动率来自严格点时历史 K 线；流动性主要来自点时成交/换手/成交额；成长和质量在缺少点时基本面时使用价格、风险和流动性代理；估值在回测中禁用当前/修订财务字段并使用中性占位；行业调整依赖股票池是否提供分类 as-of 日期。
+
+回测还会输出 `factor_diagnostics.csv` 和 `factor_diagnostics.md`，基于每个调仓信号日的全 universe 因子分数和下一持有期收益计算 Rank IC、ICIR、分组收益 spread、单调性、组合换手率和持仓收益衰减。诊断表也会按行业、市值分组和 AI 暴露输出平均前瞻收益与入选率，便于检查信号是否只在某类主题或风格里有效。样本期很短时这些诊断只用于流程检查，不应过度解读统计显著性。
+
 ## 数据缓存
 
 AkShare 的部分接口比较慢，项目默认把结果缓存到：
@@ -253,7 +261,7 @@ export QUANT_ENABLE_YAHOO_FALLBACK=0
 
 权重配置在 `src/config.py`。
 
-需要注意：当前财务质量和成长数据并不总是有稳定的点时数据源。缺失时模型会降级使用代理因子，因此回测更适合作为流程和相对排序验证，不应被理解为严格的财务点时回测。
+需要注意：当前财务质量、成长和估值数据并不总是有稳定的点时数据源。回测会禁用当前/修订财务字段，并在缺失时降级使用代理或中性分数；具体口径见每次运行生成的 `backtest_factor_lineage.csv` 和 `backtest_factor_lineage.md`。因子有效性初筛见 `factor_diagnostics.csv` 和 `factor_diagnostics.md`。
 
 ## 仓位规则
 
