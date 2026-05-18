@@ -1247,33 +1247,73 @@ class BacktestPipeline:
         else:
             weights = scores / scores.sum()
 
-        weights = self._cap_single_stock(weights, self.position_limits["max_single_stock"])
-        weights = self._cap_sector(weights, selected, self.position_limits["max_sector"])
+        weights = self._constrained_weight_optimization(weights, selected)
         weights = weights[weights > 0]
         return weights.sort_values(ascending=False)
 
-    @staticmethod
-    def _cap_single_stock(weights: pd.Series, cap: float) -> pd.Series:
-        weights = weights.copy()
+    def _constrained_weight_optimization(self, initial_weights: pd.Series, ranking: pd.DataFrame) -> pd.Series:
+        weights = initial_weights.clip(lower=0).astype(float)
+        constraints = [
+            ("single", None, self.position_limits["max_single_stock"]),
+            ("group", "sector", self.position_limits["max_sector"]),
+            ("group", "sub_sector", self.position_limits.get("max_sub_sector", 1.0)),
+        ]
         for _ in range(20):
-            over_cap = weights > cap
-            if not over_cap.any():
+            before = weights.copy()
+            for constraint_type, column, cap in constraints:
+                if constraint_type == "single":
+                    weights = weights.clip(upper=cap)
+                elif column in ranking.columns:
+                    weights = self._cap_group_weight(weights, ranking, column, cap)
+            weights = self._redistribute_available_weight(weights, initial_weights, ranking, constraints)
+            if weights.sub(before, fill_value=0).abs().sum() < 1e-8:
                 break
-            excess = (weights[over_cap] - cap).sum()
-            weights[over_cap] = cap
-            under_cap = weights < cap
-            if excess <= 0 or weights[under_cap].sum() <= 0:
-                break
-            weights[under_cap] += excess * weights[under_cap] / weights[under_cap].sum()
+        for constraint_type, column, cap in constraints:
+            if constraint_type == "single":
+                weights = weights.clip(upper=cap)
+            elif column in ranking.columns:
+                weights = self._cap_group_weight(weights, ranking, column, cap)
         return weights.clip(lower=0)
 
     @staticmethod
-    def _cap_sector(weights: pd.Series, ranking: pd.DataFrame, cap: float) -> pd.Series:
+    def _cap_group_weight(weights: pd.Series, ranking: pd.DataFrame, column: str, cap: float) -> pd.Series:
         weights = weights.copy()
-        for sector, sector_rows in ranking.loc[weights.index].groupby("sector"):
-            sector_weight = weights.reindex(sector_rows.index).sum()
-            if sector_weight > cap and sector_weight > 0:
-                weights.loc[sector_rows.index] *= cap / sector_weight
+        for _, group_rows in ranking.loc[weights.index].groupby(column):
+            group_weight = weights.reindex(group_rows.index).sum()
+            if group_weight > cap and group_weight > 0:
+                weights.loc[group_rows.index] *= cap / group_weight
+        return weights
+
+    def _redistribute_available_weight(
+        self,
+        weights: pd.Series,
+        preferred_weights: pd.Series,
+        ranking: pd.DataFrame,
+        constraints: List[Tuple[str, Optional[str], float]],
+    ) -> pd.Series:
+        available = max(0.0, min(1.0, float(preferred_weights.sum())) - float(weights.sum()))
+        if available <= 1e-10:
+            return weights
+
+        room = (self.position_limits["max_single_stock"] - weights).astype(float)
+        for constraint_type, column, cap in constraints:
+            if constraint_type != "group" or column not in ranking.columns:
+                continue
+            for _, group_rows in ranking.loc[weights.index].groupby(column):
+                group_room = cap - weights.reindex(group_rows.index).sum()
+                room.loc[group_rows.index] = room.loc[group_rows.index].clip(upper=group_room)
+        room = room.clip(lower=0)
+        candidates = room[room > 1e-10].index
+        if len(candidates) == 0:
+            return weights
+
+        tilt = preferred_weights.reindex(candidates).fillna(0).clip(lower=0)
+        if tilt.sum() <= 0:
+            tilt = pd.Series(1.0, index=candidates)
+        additions = tilt / tilt.sum() * available
+        additions = pd.Series(np.minimum(additions, room.reindex(candidates)), index=candidates)
+        weights = weights.copy()
+        weights.loc[candidates] += additions
         return weights
 
     @staticmethod

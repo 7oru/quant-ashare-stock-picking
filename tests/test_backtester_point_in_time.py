@@ -357,6 +357,26 @@ class BacktesterPointInTimeTests(unittest.TestCase):
         self.assertAlmostEqual(sector_weights.loc["power"], 0.3)
         self.assertAlmostEqual(crowding, 0.6)
 
+    def test_target_weights_respect_single_sector_and_sub_sector_constraints(self):
+        pipeline = BacktestPipeline()
+        ranking = pd.DataFrame(
+            [
+                {"stock_code": "A", "sector": "compute", "sub_sector": "server", "composite_score": 100},
+                {"stock_code": "B", "sector": "compute", "sub_sector": "server", "composite_score": 95},
+                {"stock_code": "C", "sector": "compute", "sub_sector": "chip", "composite_score": 90},
+                {"stock_code": "D", "sector": "power", "sub_sector": "grid", "composite_score": 85},
+                {"stock_code": "E", "sector": "power", "sub_sector": "grid", "composite_score": 80},
+            ]
+        ).set_index("stock_code")
+
+        weights = pipeline._target_weights(ranking, top_n=5)
+        sector_weights = weights.groupby(ranking.loc[weights.index, "sector"]).sum()
+        sub_sector_weights = weights.groupby(ranking.loc[weights.index, "sub_sector"]).sum()
+
+        self.assertLessEqual(weights.max(), pipeline.position_limits["max_single_stock"] + 1e-8)
+        self.assertLessEqual(sector_weights.max(), pipeline.position_limits["max_sector"] + 1e-8)
+        self.assertLessEqual(sub_sector_weights.max(), pipeline.position_limits["max_sub_sector"] + 1e-8)
+
     @staticmethod
     def _history(dates, is_st, trade_status, pct_change):
         return pd.DataFrame(
