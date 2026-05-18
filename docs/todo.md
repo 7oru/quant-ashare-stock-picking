@@ -35,7 +35,7 @@
 - [x] 建立行业、子行业、市值、波动率、动量拥挤度等风险暴露表。
 - [x] 从简单 capped weights 升级为带约束的组合优化。
 - [x] 增加最大行业暴露、最大主题暴露、单票风险贡献和最大回撤预算。
-- [ ] 输出组合暴露和风险贡献到 `results/<timestamp>/portfolio_risk.csv`。
+- [x] 输出组合暴露和风险贡献到 `results/<timestamp>/portfolio_risk.csv`。
 
 ## P2: Run Artifact Archiving
 

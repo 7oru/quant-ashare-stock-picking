@@ -75,7 +75,8 @@ results/
     ├── backtest_factor_lineage.csv
     ├── backtest_factor_lineage.md
     ├── factor_diagnostics.csv
-    └── factor_diagnostics.md
+    ├── factor_diagnostics.md
+    └── portfolio_risk.csv
 ```
 
 如果同一秒内多次运行，会自动追加 `_01`、`_02` 之类的后缀，避免覆盖已有结果。
@@ -219,6 +220,8 @@ python backtest_pipeline.py \
 `backtest_rebalances.csv` 会保留交易执行状态：正常成交写为 `filled`，交易约束导致无法买入写为 `blocked_buy`，持仓因停牌、ST 或涨跌停等约束无法卖出写为 `blocked_sell`，容量不足导致的部分成交写为 `partial_buy` 或 `partial_sell`。对应原因写在 `trade_constraint_reason`、`capacity_reason` 和相关容量字段里。
 
 回测过程中会为每个调仓日生成组合风险暴露表，覆盖行业、子行业、市值、AI 暴露、加权波动率分数、加权动量分数和高动量拥挤权重。后续组合约束和风险输出都基于这张表扩展。
+
+`portfolio_risk.csv` 会输出每个调仓日的组合暴露和单票近似风险贡献，可用于检查行业、主题、风格和风险预算是否符合预期。
 
 回测权重使用轻量约束优化生成：先按综合分数倾斜分配，再迭代应用单票、行业和子行业上限，并在剩余约束空间内按原始得分倾斜重新分配；无法在约束内配置的部分保留为现金。
 

@@ -362,6 +362,7 @@ class BacktestPipeline:
             point_in_time_report,
             factor_diagnostics,
             factor_diagnostics_summary,
+            portfolio_risk,
             output_dir,
             run_config,
             as_of_date=end_date,
@@ -1611,6 +1612,7 @@ class BacktestPipeline:
         point_in_time_report: pd.DataFrame,
         factor_diagnostics: pd.DataFrame,
         factor_diagnostics_summary: str,
+        portfolio_risk: pd.DataFrame,
         output_dir: str,
         run_config: Dict[str, object],
         as_of_date: str,
@@ -1627,6 +1629,7 @@ class BacktestPipeline:
             "factor_lineage_notes": str(run_dir / "backtest_factor_lineage.md"),
             "factor_diagnostics": str(run_dir / "factor_diagnostics.csv"),
             "factor_diagnostics_summary": str(run_dir / "factor_diagnostics.md"),
+            "portfolio_risk": str(run_dir / "portfolio_risk.csv"),
         }
         config = pd.DataFrame([run_config])
         summary_output = summary.copy()
@@ -1662,6 +1665,17 @@ class BacktestPipeline:
             factor_diagnostics_summary,
             encoding="utf-8",
         )
+        portfolio_risk_output = portfolio_risk.copy()
+        if "as_of_date" not in portfolio_risk_output.columns:
+            if not portfolio_risk_output.empty and "signal_date" in portfolio_risk_output.columns:
+                portfolio_risk_output.insert(
+                    0,
+                    "as_of_date",
+                    pd.to_datetime(portfolio_risk_output["signal_date"]).dt.strftime("%Y-%m-%d"),
+                )
+            else:
+                portfolio_risk_output.insert(0, "as_of_date", as_of_date)
+        portfolio_risk_output.to_csv(paths["portfolio_risk"], index=False)
         return paths
 
     @staticmethod

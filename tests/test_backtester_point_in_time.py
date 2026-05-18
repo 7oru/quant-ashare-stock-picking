@@ -123,6 +123,9 @@ class BacktesterPointInTimeTests(unittest.TestCase):
                     [{"metric": "rank_ic_mean", "factor": "momentum_score", "value": 0.1, "observations": 1, "periods": 1, "notes": ""}]
                 ),
                 factor_diagnostics_summary="# Factor Diagnostics\n",
+                portfolio_risk=pd.DataFrame(
+                    [{"signal_date": pd.Timestamp("2024-03-01"), "metric": "industry_exposure", "value": 0.3}]
+                ),
                 output_dir=tmpdir,
                 run_config={"as_of_date": "2024-03-31"},
                 as_of_date="2024-03-31",
@@ -137,6 +140,7 @@ class BacktesterPointInTimeTests(unittest.TestCase):
             factor_lineage_notes = Path(paths["factor_lineage_notes"]).read_text(encoding="utf-8")
             factor_diagnostics = pd.read_csv(paths["factor_diagnostics"])
             factor_diagnostics_summary = Path(paths["factor_diagnostics_summary"]).read_text(encoding="utf-8")
+            portfolio_risk = pd.read_csv(paths["portfolio_risk"])
 
         self.assertEqual(summary.loc[0, "as_of_date"], "2024-03-31")
         self.assertEqual(equity.loc[0, "as_of_date"], "2024-03-04")
@@ -148,6 +152,8 @@ class BacktesterPointInTimeTests(unittest.TestCase):
         self.assertEqual(factor_diagnostics.loc[0, "as_of_date"], "2024-03-31")
         self.assertEqual(factor_diagnostics.loc[0, "metric"], "rank_ic_mean")
         self.assertIn("Factor Diagnostics", factor_diagnostics_summary)
+        self.assertEqual(portfolio_risk.loc[0, "as_of_date"], "2024-03-01")
+        self.assertEqual(portfolio_risk.loc[0, "metric"], "industry_exposure")
 
     def test_factor_lineage_marks_strict_and_proxy_factors(self):
         lineage = BacktestPipeline._factor_lineage("2024-03-31")
