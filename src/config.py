@@ -42,6 +42,9 @@ POSITION_LIMITS = {
     'max_single_stock': 0.15,      # 单票最大仓位15%
     'max_sector': 0.30,            # 单行业最大仓位30%
     'max_sub_sector': 0.25,        # 单一子行业最大仓位25%
+    'max_ai_exposure': 0.60,       # 单一AI主题暴露最大60%
+    'max_single_risk_contribution': 0.20,  # 单票风险贡献最大20%
+    'max_drawdown_budget': 0.20,   # 回撤超过20%时降低总风险暴露
     'min_stock_weight': 0.02,      # 最小入选仓位2%
     'min_rank_for_position': 40    # 排名40名以后不配置
 }

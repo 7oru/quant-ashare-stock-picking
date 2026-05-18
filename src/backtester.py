@@ -55,6 +55,7 @@ class BacktestPipeline:
         slippage_bps: float = 5.0,
         impact_bps: float = 0.0,
         max_participation_rate: float = 0.10,
+        max_drawdown_budget: float | None = None,
         output_dir: str = "results",
         output_timestamp: str | None = None,
         candidate_visible_dates: Optional[Dict[str, str]] = None,
@@ -87,6 +88,12 @@ class BacktestPipeline:
 
         equity = float(initial_capital)
         benchmark_equity = float(initial_capital)
+        peak_equity = float(initial_capital)
+        max_drawdown_budget = (
+            self.position_limits.get("max_drawdown_budget", 0.20)
+            if max_drawdown_budget is None
+            else max_drawdown_budget
+        )
         previous_weights = pd.Series(dtype="float64")
         equity_records = []
         rebalance_records = []
@@ -150,6 +157,10 @@ class BacktestPipeline:
             point_in_time_records.append(point_in_time_record)
 
             desired_weights = self._target_weights(tradable_ranking, top_n)
+            current_drawdown = equity / peak_equity - 1 if peak_equity > 0 else 0.0
+            drawdown_budget_active = current_drawdown <= -abs(max_drawdown_budget)
+            if drawdown_budget_active:
+                desired_weights = desired_weights * 0.5
             blocked_buy_records = self._blocked_buy_records(
                 signal_date=signal_date,
                 trade_start_date=trade_dates[0],
@@ -235,6 +246,8 @@ class BacktestPipeline:
                         "trade_constraint_reason": execution_status["trade_constraint_reason"],
                         "capacity_weight": capacity_report.get(stock_code, {}).get("capacity_weight", np.nan),
                         "estimated_trade_amount": capacity_report.get(stock_code, {}).get("estimated_trade_amount", np.nan),
+                        "drawdown_budget_active": drawdown_budget_active,
+                        "drawdown_at_signal": current_drawdown,
                         "buy_turnover": cost["buy_turnover"],
                         "sell_turnover": cost["sell_turnover"],
                         "transaction_cost_rate": fee_rate,
@@ -257,6 +270,7 @@ class BacktestPipeline:
 
                 equity *= 1 + strategy_return
                 benchmark_equity *= 1 + benchmark_return
+                peak_equity = max(peak_equity, equity)
 
                 equity_records.append(
                     {
@@ -304,6 +318,7 @@ class BacktestPipeline:
             "slippage_bps": slippage_bps,
             "impact_bps": impact_bps,
             "max_participation_rate": max_participation_rate,
+            "max_drawdown_budget": max_drawdown_budget,
             "min_listing_days": min_listing_days,
             "as_of_date": end_date,
             "point_in_time_stock_pool_policy": (
@@ -332,6 +347,10 @@ class BacktestPipeline:
             ),
             "capacity_policy": (
                 "cap each buy and sell by trade-start daily amount times max_participation_rate divided by equity"
+            ),
+            "risk_budget_policy": (
+                "constrain single stock, sector, sub-sector, AI exposure, and approximate single-name risk contribution; "
+                "halve desired gross exposure when current drawdown breaches max_drawdown_budget"
             ),
             "candidate_visible_dates": self._json_visible_dates(candidate_visible_dates),
             **stock_pool_metadata,
@@ -1234,6 +1253,23 @@ class BacktestPipeline:
                     "notes": "Portfolio weight in high-momentum names.",
                 }
             )
+        if "volatility_score" in held.columns:
+            risk_proxy = (100 - pd.to_numeric(held["volatility_score"], errors="coerce")).clip(lower=1).fillna(50)
+            risk_value = held["target_weight"] * risk_proxy
+            total_risk = risk_value.sum()
+            if total_risk > 0:
+                for stock_code, contribution in (risk_value / total_risk).items():
+                    rows.append(
+                        {
+                            "signal_date": signal_date,
+                            "metric": "single_name_risk_contribution",
+                            "group_type": "stock_code",
+                            "group_value": stock_code,
+                            "value": float(contribution),
+                            "weight": float(held.loc[stock_code, "target_weight"]),
+                            "notes": "Approximate risk contribution using target weight times inverse volatility score.",
+                        }
+                    )
         return rows
 
     def _target_weights(self, ranking: pd.DataFrame, top_n: int) -> pd.Series:
@@ -1257,14 +1293,20 @@ class BacktestPipeline:
             ("single", None, self.position_limits["max_single_stock"]),
             ("group", "sector", self.position_limits["max_sector"]),
             ("group", "sub_sector", self.position_limits.get("max_sub_sector", 1.0)),
+            ("group", "ai_exposure", self.position_limits.get("max_ai_exposure", 1.0)),
         ]
-        for _ in range(20):
+        for _ in range(100):
             before = weights.copy()
             for constraint_type, column, cap in constraints:
                 if constraint_type == "single":
                     weights = weights.clip(upper=cap)
                 elif column in ranking.columns:
                     weights = self._cap_group_weight(weights, ranking, column, cap)
+            weights = self._cap_single_risk_contribution(
+                weights,
+                ranking,
+                self.position_limits.get("max_single_risk_contribution", 1.0),
+            )
             weights = self._redistribute_available_weight(weights, initial_weights, ranking, constraints)
             if weights.sub(before, fill_value=0).abs().sum() < 1e-8:
                 break
@@ -1273,6 +1315,11 @@ class BacktestPipeline:
                 weights = weights.clip(upper=cap)
             elif column in ranking.columns:
                 weights = self._cap_group_weight(weights, ranking, column, cap)
+        weights = self._cap_single_risk_contribution(
+            weights,
+            ranking,
+            self.position_limits.get("max_single_risk_contribution", 1.0),
+        )
         return weights.clip(lower=0)
 
     @staticmethod
@@ -1315,6 +1362,34 @@ class BacktestPipeline:
         weights = weights.copy()
         weights.loc[candidates] += additions
         return weights
+
+    @staticmethod
+    def _cap_single_risk_contribution(weights: pd.Series, ranking: pd.DataFrame, cap: float) -> pd.Series:
+        if cap >= 1 or weights.empty or "volatility_score" not in ranking.columns:
+            return weights
+        effective_cap = cap * 0.995
+        weights = weights.copy()
+        for _ in range(100):
+            risk_proxy = (100 - pd.to_numeric(ranking.reindex(weights.index)["volatility_score"], errors="coerce"))
+            risk_proxy = risk_proxy.clip(lower=1).fillna(50)
+            risk_value = weights * risk_proxy
+            total_risk = risk_value.sum()
+            if total_risk <= 0:
+                break
+            contributions = risk_value / total_risk
+            over = contributions > effective_cap
+            if not over.any():
+                break
+            for stock_code in contributions[over].index:
+                other_risk = total_risk - risk_value.loc[stock_code]
+                if other_risk <= 0:
+                    max_weight = 0.0
+                else:
+                    max_weight = effective_cap * other_risk / (
+                        risk_proxy.loc[stock_code] * (1 - effective_cap)
+                    )
+                weights.loc[stock_code] = min(weights.loc[stock_code], max_weight)
+        return weights.clip(lower=0)
 
     @staticmethod
     def _turnover(previous: pd.Series, current: pd.Series) -> float:

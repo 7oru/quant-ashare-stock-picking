@@ -36,6 +36,7 @@ def main():
     parser.add_argument("--slippage-bps", type=float, default=5.0, help="买卖双边滑点, bps")
     parser.add_argument("--impact-bps", type=float, default=0.0, help="买卖双边冲击成本, bps")
     parser.add_argument("--max-participation-rate", type=float, default=0.10, help="单票单日最大成交额参与率")
+    parser.add_argument("--max-drawdown-budget", type=float, default=None, help="组合回撤预算，触发后降低目标总仓位")
     parser.add_argument("--min-listing-days", type=int, default=60, help="上市未满该自然日数的股票不参与调仓买入")
     parser.add_argument("--output-dir", type=str, default="results", help="基础输出目录，每次运行会创建 <timestamp> 子目录")
     parser.add_argument(
@@ -66,6 +67,7 @@ def main():
         slippage_bps=args.slippage_bps,
         impact_bps=args.impact_bps,
         max_participation_rate=args.max_participation_rate,
+        max_drawdown_budget=args.max_drawdown_budget,
         output_dir=args.output_dir,
         candidate_visible_dates=candidate_visible_dates,
         min_listing_days=args.min_listing_days,

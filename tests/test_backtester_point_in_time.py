@@ -377,6 +377,35 @@ class BacktesterPointInTimeTests(unittest.TestCase):
         self.assertLessEqual(sector_weights.max(), pipeline.position_limits["max_sector"] + 1e-8)
         self.assertLessEqual(sub_sector_weights.max(), pipeline.position_limits["max_sub_sector"] + 1e-8)
 
+    def test_target_weights_respect_theme_and_risk_contribution_constraints(self):
+        pipeline = BacktestPipeline()
+        ranking = pd.DataFrame(
+            [
+                {"stock_code": "A", "sector": "s1", "sub_sector": "ss1", "ai_exposure": "high", "composite_score": 100, "volatility_score": 10},
+                {"stock_code": "B", "sector": "s2", "sub_sector": "ss2", "ai_exposure": "high", "composite_score": 95, "volatility_score": 20},
+                {"stock_code": "C", "sector": "s3", "sub_sector": "ss3", "ai_exposure": "medium", "composite_score": 90, "volatility_score": 90},
+                {"stock_code": "D", "sector": "s4", "sub_sector": "ss4", "ai_exposure": "low", "composite_score": 85, "volatility_score": 80},
+                {"stock_code": "E", "sector": "s5", "sub_sector": "ss5", "ai_exposure": "low", "composite_score": 80, "volatility_score": 70},
+            ]
+        ).set_index("stock_code")
+
+        weights = pipeline._target_weights(ranking, top_n=5)
+        ai_weights = weights.groupby(ranking.loc[weights.index, "ai_exposure"]).sum()
+        risk_rows = pd.DataFrame(
+            BacktestPipeline._portfolio_risk_rows(
+                signal_date=pd.Timestamp("2024-03-31"),
+                weights=weights,
+                ranking=ranking,
+            )
+        )
+        max_contribution = risk_rows.loc[
+            risk_rows["metric"] == "single_name_risk_contribution",
+            "value",
+        ].max()
+
+        self.assertLessEqual(ai_weights.max(), pipeline.position_limits["max_ai_exposure"] + 1e-8)
+        self.assertLessEqual(max_contribution, pipeline.position_limits["max_single_risk_contribution"] + 1e-8)
+
     @staticmethod
     def _history(dates, is_st, trade_status, pct_change):
         return pd.DataFrame(
