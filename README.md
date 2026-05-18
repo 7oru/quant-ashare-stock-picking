@@ -217,6 +217,8 @@ python backtest_pipeline.py \
 
 `backtest_rebalances.csv` 会保留交易执行状态：正常成交写为 `filled`，交易约束导致无法买入写为 `blocked_buy`，持仓因停牌、ST 或涨跌停等约束无法卖出写为 `blocked_sell`，容量不足导致的部分成交写为 `partial_buy` 或 `partial_sell`。对应原因写在 `trade_constraint_reason`、`capacity_reason` 和相关容量字段里。
 
+回测过程中会为每个调仓日生成组合风险暴露表，覆盖行业、子行业、市值、AI 暴露、加权波动率分数、加权动量分数和高动量拥挤权重。后续组合约束和风险输出都基于这张表扩展。
+
 ## 数据缓存
 
 AkShare 的部分接口比较慢，项目默认把结果缓存到：

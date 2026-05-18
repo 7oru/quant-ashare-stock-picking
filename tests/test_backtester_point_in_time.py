@@ -336,6 +336,27 @@ class BacktesterPointInTimeTests(unittest.TestCase):
         self.assertEqual(report["B"]["capacity_reason"], "sell_trading_constraint_blocked")
         self.assertEqual(status["execution_status"], "blocked_sell")
 
+    def test_portfolio_risk_rows_report_exposures_and_crowding(self):
+        ranking = pd.DataFrame(
+            [
+                {"stock_code": "A", "sector": "compute", "sub_sector": "server", "market_cap": "large", "ai_exposure": "high", "momentum_score": 80, "volatility_score": 40, "composite_score": 70},
+                {"stock_code": "B", "sector": "power", "sub_sector": "grid", "market_cap": "mid", "ai_exposure": "medium", "momentum_score": 60, "volatility_score": 50, "composite_score": 65},
+            ]
+        ).set_index("stock_code")
+
+        rows = BacktestPipeline._portfolio_risk_rows(
+            signal_date=pd.Timestamp("2024-03-31"),
+            weights=pd.Series({"A": 0.6, "B": 0.3}),
+            ranking=ranking,
+        )
+        risk = pd.DataFrame(rows)
+        sector_weights = risk.loc[risk["metric"] == "industry_exposure"].set_index("group_value")["value"]
+        crowding = risk.loc[risk["metric"] == "momentum_crowding_weight", "value"].iloc[0]
+
+        self.assertAlmostEqual(sector_weights.loc["compute"], 0.6)
+        self.assertAlmostEqual(sector_weights.loc["power"], 0.3)
+        self.assertAlmostEqual(crowding, 0.6)
+
     @staticmethod
     def _history(dates, is_st, trade_status, pct_change):
         return pd.DataFrame(

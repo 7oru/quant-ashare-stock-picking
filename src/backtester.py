@@ -92,6 +92,7 @@ class BacktestPipeline:
         rebalance_records = []
         point_in_time_records = []
         factor_signal_records = []
+        portfolio_risk_records = []
 
         for i, signal_date in enumerate(rebalance_dates):
             signal_loc = calendar.get_loc(signal_date)
@@ -165,6 +166,13 @@ class BacktestPipeline:
                 trade_start_date=trade_dates[0],
                 capital=equity,
                 max_participation_rate=max_participation_rate,
+            )
+            portfolio_risk_records.extend(
+                self._portfolio_risk_rows(
+                    signal_date=signal_date,
+                    weights=weights,
+                    ranking=ranking,
+                )
             )
             selected_returns = stock_returns.reindex(columns=weights.index).loc[trade_dates].fillna(0)
             holding_returns = (1 + selected_returns).prod() - 1
@@ -279,6 +287,7 @@ class BacktestPipeline:
         point_in_time_report = pd.DataFrame(point_in_time_records)
         factor_signals = pd.DataFrame(factor_signal_records)
         factor_diagnostics, factor_diagnostics_summary = self._factor_diagnostics(factor_signals, rebalances)
+        portfolio_risk = pd.DataFrame(portfolio_risk_records)
         summary = self._summary(equity_curve, initial_capital, len(rebalance_dates))
 
         run_config = {
@@ -346,6 +355,7 @@ class BacktestPipeline:
             "point_in_time_report": point_in_time_report,
             "factor_diagnostics": factor_diagnostics,
             "factor_diagnostics_summary": factor_diagnostics_summary,
+            "portfolio_risk": portfolio_risk,
             "paths": paths,
             "output_dir": str(Path(paths["summary"]).parent),
         }
@@ -1155,6 +1165,76 @@ class BacktestPipeline:
             )
         lines.append("")
         return "\n".join(lines)
+
+    @staticmethod
+    def _portfolio_risk_rows(
+        *,
+        signal_date: pd.Timestamp,
+        weights: pd.Series,
+        ranking: pd.DataFrame,
+    ) -> List[Dict[str, object]]:
+        rows = []
+        if weights.empty:
+            return rows
+        held = ranking.reindex(weights.index).copy()
+        held["target_weight"] = weights
+
+        group_columns = [
+            ("sector", "industry_exposure"),
+            ("sub_sector", "sub_industry_exposure"),
+            ("market_cap", "market_cap_exposure"),
+            ("ai_exposure", "ai_exposure"),
+        ]
+        for column, metric in group_columns:
+            if column not in held.columns:
+                continue
+            group_values = held[column].fillna("unknown").replace("", "unknown")
+            for group_value, group in held.assign(_group_value=group_values).groupby("_group_value"):
+                rows.append(
+                    {
+                        "signal_date": signal_date,
+                        "metric": metric,
+                        "group_type": column,
+                        "group_value": group_value,
+                        "value": float(group["target_weight"].sum()),
+                        "weight": float(group["target_weight"].sum()),
+                        "notes": "Portfolio target-weight exposure by group.",
+                    }
+                )
+
+        weighted_metrics = [
+            ("volatility_score", "weighted_avg_volatility_score"),
+            ("momentum_score", "weighted_avg_momentum_score"),
+            ("composite_score", "weighted_avg_composite_score"),
+        ]
+        for column, metric in weighted_metrics:
+            if column in held.columns and held[column].notna().any():
+                rows.append(
+                    {
+                        "signal_date": signal_date,
+                        "metric": metric,
+                        "group_type": "portfolio",
+                        "group_value": "",
+                        "value": float((held[column].fillna(0) * held["target_weight"]).sum()),
+                        "weight": float(held["target_weight"].sum()),
+                        "notes": "Target-weighted average score.",
+                    }
+                )
+
+        if "momentum_score" in held.columns:
+            crowded = held.loc[pd.to_numeric(held["momentum_score"], errors="coerce") >= 75]
+            rows.append(
+                {
+                    "signal_date": signal_date,
+                    "metric": "momentum_crowding_weight",
+                    "group_type": "portfolio",
+                    "group_value": "momentum_score_gte_75",
+                    "value": float(crowded["target_weight"].sum()),
+                    "weight": float(crowded["target_weight"].sum()),
+                    "notes": "Portfolio weight in high-momentum names.",
+                }
+            )
+        return rows
 
     def _target_weights(self, ranking: pd.DataFrame, top_n: int) -> pd.Series:
         selected = ranking.head(top_n).copy()
