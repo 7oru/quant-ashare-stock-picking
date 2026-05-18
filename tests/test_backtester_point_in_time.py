@@ -274,6 +274,28 @@ class BacktesterPointInTimeTests(unittest.TestCase):
         expected_cost = (0.5 * 17.1 + 0.7 * 22.1) / 10000
         self.assertAlmostEqual(cost["cost_rate"], expected_cost)
 
+    def test_apply_capacity_limits_caps_buy_and_sell_turnover(self):
+        previous = pd.Series({"A": 0.5})
+        desired = pd.Series({"A": 0.0, "B": 0.6})
+        histories = {
+            "A": pd.DataFrame({"成交额": [1000.0]}, index=pd.DatetimeIndex([pd.Timestamp("2024-04-01")])),
+            "B": pd.DataFrame({"成交额": [2000.0]}, index=pd.DatetimeIndex([pd.Timestamp("2024-04-01")])),
+        }
+
+        adjusted, report = BacktestPipeline._apply_capacity_limits(
+            desired=desired,
+            previous=previous,
+            histories=histories,
+            trade_start_date=pd.Timestamp("2024-04-01"),
+            capital=10000.0,
+            max_participation_rate=0.1,
+        )
+
+        self.assertAlmostEqual(adjusted.loc["A"], 0.49)
+        self.assertAlmostEqual(adjusted.loc["B"], 0.02)
+        self.assertEqual(report["A"]["capacity_reason"], "sell_capacity_limited")
+        self.assertEqual(report["B"]["capacity_reason"], "buy_capacity_limited")
+
     @staticmethod
     def _history(dates, is_st, trade_status, pct_change):
         return pd.DataFrame(

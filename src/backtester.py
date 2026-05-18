@@ -54,6 +54,7 @@ class BacktestPipeline:
         transfer_fee_bps: float = 0.1,
         slippage_bps: float = 5.0,
         impact_bps: float = 0.0,
+        max_participation_rate: float = 0.10,
         output_dir: str = "results",
         output_timestamp: str | None = None,
         candidate_visible_dates: Optional[Dict[str, str]] = None,
@@ -146,7 +147,15 @@ class BacktestPipeline:
             point_in_time_record.update(self._trading_constraint_counts(trading_constraints))
             point_in_time_records.append(point_in_time_record)
 
-            weights = self._target_weights(tradable_ranking, top_n)
+            desired_weights = self._target_weights(tradable_ranking, top_n)
+            weights, capacity_report = self._apply_capacity_limits(
+                desired=desired_weights,
+                previous=previous_weights,
+                histories=eligible_histories,
+                trade_start_date=trade_dates[0],
+                capital=equity,
+                max_participation_rate=max_participation_rate,
+            )
             selected_returns = stock_returns.reindex(columns=weights.index).loc[trade_dates].fillna(0)
             holding_returns = (1 + selected_returns).prod() - 1
             universe_returns = (1 + stock_returns.reindex(columns=ranking.index).loc[trade_dates].fillna(0)).prod() - 1
@@ -185,7 +194,7 @@ class BacktestPipeline:
                 f"现金 {max(0, 1 - weights.sum()):.1%}"
             )
 
-            for rank, (stock_code, row) in enumerate(ranking.loc[weights.index].iterrows(), 1):
+            for rank, (stock_code, row) in enumerate(ranking.reindex(weights.index).iterrows(), 1):
                 history = eligible_histories.get(stock_code)
                 data_provider = history.attrs.get("data_provider", "unknown") if history is not None else "unknown"
                 provider_adjustment = history.attrs.get("provider_adjustment", "") if history is not None else ""
@@ -197,7 +206,12 @@ class BacktestPipeline:
                         "stock_name": row.get("stock_name"),
                         "sector": row.get("sector"),
                         "rank": rank,
+                        "desired_weight": desired_weights.get(stock_code, 0.0),
                         "target_weight": weights.loc[stock_code],
+                        "capacity_limited": bool(capacity_report.get(stock_code, {}).get("capacity_limited", False)),
+                        "capacity_reason": capacity_report.get(stock_code, {}).get("capacity_reason", ""),
+                        "capacity_weight": capacity_report.get(stock_code, {}).get("capacity_weight", np.nan),
+                        "estimated_trade_amount": capacity_report.get(stock_code, {}).get("estimated_trade_amount", np.nan),
                         "buy_turnover": cost["buy_turnover"],
                         "sell_turnover": cost["sell_turnover"],
                         "transaction_cost_rate": fee_rate,
@@ -265,6 +279,7 @@ class BacktestPipeline:
             "transfer_fee_bps": transfer_fee_bps,
             "slippage_bps": slippage_bps,
             "impact_bps": impact_bps,
+            "max_participation_rate": max_participation_rate,
             "min_listing_days": min_listing_days,
             "as_of_date": end_date,
             "point_in_time_stock_pool_policy": (
@@ -290,6 +305,9 @@ class BacktestPipeline:
             "transaction_cost_policy": (
                 "rebalance at next trading day to model T+1 signal execution; "
                 "charge commission/transfer/slippage/impact on buys and sells, plus stamp tax on sells"
+            ),
+            "capacity_policy": (
+                "cap each buy and sell by trade-start daily amount times max_participation_rate divided by equity"
             ),
             "candidate_visible_dates": self._json_visible_dates(candidate_visible_dates),
             **stock_pool_metadata,
@@ -1192,6 +1210,56 @@ class BacktestPipeline:
             "sell_turnover": sell_turnover,
             "cost_rate": float(cost_rate),
         }
+
+    @staticmethod
+    def _apply_capacity_limits(
+        *,
+        desired: pd.Series,
+        previous: pd.Series,
+        histories: Dict[str, pd.DataFrame],
+        trade_start_date: pd.Timestamp,
+        capital: float,
+        max_participation_rate: float,
+    ) -> Tuple[pd.Series, Dict[str, Dict[str, object]]]:
+        if capital <= 0 or max_participation_rate <= 0:
+            return desired.copy(), {}
+
+        adjusted = {}
+        report: Dict[str, Dict[str, object]] = {}
+        all_index = previous.index.union(desired.index)
+        for stock_code in all_index:
+            previous_weight = float(previous.get(stock_code, 0.0))
+            desired_weight = float(desired.get(stock_code, 0.0))
+            delta = desired_weight - previous_weight
+            amount = BacktestPipeline._trade_start_amount(histories.get(stock_code), trade_start_date)
+            capacity_weight = np.inf if pd.isna(amount) else float(amount * max_participation_rate / capital)
+            limited_delta = delta
+            reason = ""
+            if np.isfinite(capacity_weight) and abs(delta) > capacity_weight:
+                limited_delta = np.sign(delta) * capacity_weight
+                reason = "buy_capacity_limited" if delta > 0 else "sell_capacity_limited"
+
+            final_weight = max(0.0, previous_weight + limited_delta)
+            if final_weight > 0:
+                adjusted[stock_code] = final_weight
+            report[stock_code] = {
+                "capacity_limited": bool(reason),
+                "capacity_reason": reason,
+                "capacity_weight": capacity_weight if np.isfinite(capacity_weight) else np.nan,
+                "estimated_trade_amount": abs(limited_delta) * capital,
+                "desired_weight": desired_weight,
+                "previous_weight": previous_weight,
+                "final_weight": final_weight,
+            }
+
+        return pd.Series(adjusted, dtype="float64").sort_values(ascending=False), report
+
+    @staticmethod
+    def _trade_start_amount(history: Optional[pd.DataFrame], trade_start_date: pd.Timestamp) -> float:
+        row = BacktestPipeline._history_row_on_or_after(history, trade_start_date)
+        if row is None or pd.Timestamp(row.name).normalize() != trade_start_date.normalize():
+            return np.nan
+        return BacktestPipeline._number(row.get("成交额"))
 
     @staticmethod
     def _summary(equity_curve: pd.DataFrame, initial_capital: float, rebalance_count: int) -> pd.DataFrame:

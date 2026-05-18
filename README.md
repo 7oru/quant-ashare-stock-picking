@@ -198,6 +198,7 @@ python backtest_pipeline.py \
 | `--transfer-fee-bps` | `0.1` | 买卖双边过户费，单位 bps |
 | `--slippage-bps` | `5.0` | 买卖双边滑点，单位 bps |
 | `--impact-bps` | `0.0` | 买卖双边冲击成本，单位 bps |
+| `--max-participation-rate` | `0.10` | 单票单日最大成交额参与率，用于容量约束 |
 | `--min-listing-days` | `60` | 上市未满该自然日数的股票不参与调仓买入 |
 | `--output-dir` | `results` | 基础输出目录，实际会写入其下的时间戳子目录 |
 | `--candidate-visible-dates-json` | 无 | 可选 `{stock_code: YYYY-MM-DD}`，限制 LLM 新候选进入历史回测 universe 的日期 |
@@ -212,7 +213,7 @@ python backtest_pipeline.py \
 
 回测还会输出 `factor_diagnostics.csv` 和 `factor_diagnostics.md`，基于每个调仓信号日的全 universe 因子分数和下一持有期收益计算 Rank IC、ICIR、分组收益 spread、单调性、组合换手率和持仓收益衰减。诊断表也会按行业、市值分组和 AI 暴露输出平均前瞻收益与入选率，并计算剥离行业/市值组别暴露后的中性化 Rank IC，便于检查信号是否只在某类主题或风格里有效。样本期很短时这些诊断只用于流程检查，不应过度解读统计显著性。
 
-调仓买入前会用 BaoStock 日线字段做基础交易约束过滤：停牌或无当日交易行、ST、上市未满 `--min-listing-days`、以及涨跌停锁定的股票不会进入实际持仓权重。组合从调仓信号日后的下一个交易日开始执行，避免同日信号同日成交；交易成本按买入和卖出拆开计算，买卖双边收佣金、过户费、滑点和冲击成本，卖出侧额外收印花税。`backtest_point_in_time.csv` 会记录每个调仓日的可交易股票数、交易约束剔除数量和原因计数。
+调仓买入前会用 BaoStock 日线字段做基础交易约束过滤：停牌或无当日交易行、ST、上市未满 `--min-listing-days`、以及涨跌停锁定的股票不会进入实际持仓权重。组合从调仓信号日后的下一个交易日开始执行，避免同日信号同日成交；交易成本按买入和卖出拆开计算，买卖双边收佣金、过户费、滑点和冲击成本，卖出侧额外收印花税。容量约束使用执行日成交额乘以 `--max-participation-rate` 估算单票单日可交易金额，买入和卖出超过容量时只做部分成交并保留现金或剩余持仓。`backtest_point_in_time.csv` 会记录每个调仓日的可交易股票数、交易约束剔除数量和原因计数。
 
 ## 数据缓存
 
