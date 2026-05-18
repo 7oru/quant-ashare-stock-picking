@@ -217,6 +217,56 @@ class BacktesterPointInTimeTests(unittest.TestCase):
         self.assertGreater(neutralized["value"], 0)
         self.assertIn("neutralized_rank_ic_mean", summary)
 
+    def test_trading_constraint_report_excludes_untradable_names(self):
+        stock_info = pd.DataFrame(
+            [
+                {"stock_code": "000001.SZ", "stock_name": "A", "list_date": "2020-01-01"},
+                {"stock_code": "000002.SZ", "stock_name": "B", "list_date": "2024-02-15"},
+                {"stock_code": "000003.SZ", "stock_name": "C", "list_date": "2020-01-01"},
+                {"stock_code": "000004.SZ", "stock_name": "D", "list_date": "2020-01-01"},
+                {"stock_code": "000005.SZ", "stock_name": "E", "list_date": "2020-01-01"},
+            ]
+        ).set_index("stock_code")
+        ranking = pd.DataFrame(index=stock_info.index)
+        histories = {
+            "000001.SZ": self._history(["2024-03-29", "2024-04-01"], [0, 0], [1, 1], [1.0, 1.0]),
+            "000002.SZ": self._history(["2024-03-29", "2024-04-01"], [0, 0], [1, 1], [1.0, 1.0]),
+            "000003.SZ": self._history(["2024-03-29", "2024-04-01"], [1, 1], [1, 1], [1.0, 1.0]),
+            "000004.SZ": self._history(["2024-03-29", "2024-04-01"], [0, 0], [0, 0], [1.0, 1.0]),
+            "000005.SZ": self._history(["2024-03-29", "2024-04-01"], [0, 0], [1, 1], [1.0, 9.9]),
+        }
+
+        report = BacktestPipeline._trading_constraint_report(
+            stock_info=stock_info,
+            histories=histories,
+            ranking=ranking,
+            signal_date=pd.Timestamp("2024-03-29"),
+            trade_start_date=pd.Timestamp("2024-04-01"),
+            min_listing_days=60,
+        )
+
+        self.assertTrue(report.loc["000001.SZ", "tradable"])
+        self.assertIn("listing_age_lt_60d", report.loc["000002.SZ", "constraint_reason"])
+        self.assertIn("st_at_signal", report.loc["000003.SZ", "constraint_reason"])
+        self.assertIn("suspended", report.loc["000004.SZ", "constraint_reason"])
+        self.assertIn("limit_locked", report.loc["000005.SZ", "constraint_reason"])
+        counts = BacktestPipeline._trading_constraint_counts(report)
+        self.assertEqual(counts["tradable_universe_count"], 1)
+        self.assertEqual(counts["excluded_trading_constraint_count"], 4)
+
+    @staticmethod
+    def _history(dates, is_st, trade_status, pct_change):
+        return pd.DataFrame(
+            {
+                "收盘": [10.0] * len(dates),
+                "成交量": [1000.0] * len(dates),
+                "交易状态": trade_status,
+                "是否ST": is_st,
+                "涨跌幅": pct_change,
+            },
+            index=pd.DatetimeIndex(pd.to_datetime(dates)),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

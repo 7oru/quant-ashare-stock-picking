@@ -33,6 +33,7 @@ class BacktestPipeline:
 
     POOL_ENTRY_DATE_COLUMNS = ("pool_entry_date", "stock_pool_as_of_date", "as_of_date")
     INDUSTRY_AS_OF_DATE_COLUMNS = ("industry_as_of_date", "classification_as_of_date", "sector_as_of_date")
+    DEFAULT_MIN_LISTING_DAYS = 60
 
     def __init__(self):
         self.factor_calculator = FactorCalculator()
@@ -52,6 +53,7 @@ class BacktestPipeline:
         output_dir: str = "results",
         output_timestamp: str | None = None,
         candidate_visible_dates: Optional[Dict[str, str]] = None,
+        min_listing_days: int = DEFAULT_MIN_LISTING_DAYS,
     ) -> Dict[str, object]:
         """
         运行回测并保存结果。
@@ -114,10 +116,10 @@ class BacktestPipeline:
                 ensure_ascii=False,
                 sort_keys=True,
             )
-            point_in_time_records.append(point_in_time_record)
 
             price_data, financial_data = self._build_signal_data(eligible_histories, signal_date, lookback_days)
             if len(price_data) < max(3, min(top_n, 5)):
+                point_in_time_records.append(point_in_time_record)
                 log(f"{signal_date.date()} 可用股票过少，跳过调仓")
                 continue
 
@@ -127,7 +129,20 @@ class BacktestPipeline:
             composite_score = self.factor_calculator.calculate_composite_score(factors)
 
             ranking = self._build_ranking(available_stock_info, factors, composite_score)
-            weights = self._target_weights(ranking, top_n)
+            trading_constraints = self._trading_constraint_report(
+                stock_info=available_stock_info,
+                histories=eligible_histories,
+                ranking=ranking,
+                signal_date=signal_date,
+                trade_start_date=trade_dates[0],
+                min_listing_days=min_listing_days,
+            )
+            tradable_index = trading_constraints.loc[trading_constraints["tradable"]].index
+            tradable_ranking = ranking.loc[ranking.index.intersection(tradable_index)]
+            point_in_time_record.update(self._trading_constraint_counts(trading_constraints))
+            point_in_time_records.append(point_in_time_record)
+
+            weights = self._target_weights(tradable_ranking, top_n)
             selected_returns = stock_returns.reindex(columns=weights.index).loc[trade_dates].fillna(0)
             holding_returns = (1 + selected_returns).prod() - 1
             universe_returns = (1 + stock_returns.reindex(columns=ranking.index).loc[trade_dates].fillna(0)).prod() - 1
@@ -152,6 +167,7 @@ class BacktestPipeline:
 
             log(
                 f"{signal_date.date()} 调仓: {len(weights)} 只, "
+                f"可交易 {len(tradable_ranking)}/{len(ranking)} 只, "
                 f"换手 {turnover:.2f}, 费用 {fee_rate:.4%}, "
                 f"现金 {max(0, 1 - weights.sum()):.1%}"
             )
@@ -226,6 +242,7 @@ class BacktestPipeline:
             "lookback_days": lookback_days,
             "top_n": top_n,
             "fee_bps": fee_bps,
+            "min_listing_days": min_listing_days,
             "as_of_date": end_date,
             "point_in_time_stock_pool_policy": (
                 "filter stock_pool snapshot by list_date <= signal_date, "
@@ -243,6 +260,9 @@ class BacktestPipeline:
             ),
             "historical_price_provider_policy": (
                 "try BaoStock daily history first, then Yahoo chart fallback when enabled"
+            ),
+            "trading_constraint_policy": (
+                "exclude suspended, ST, newly listed, and limit-locked names from rebalance buys"
             ),
             "candidate_visible_dates": self._json_visible_dates(candidate_visible_dates),
             **stock_pool_metadata,
@@ -472,6 +492,138 @@ class BacktestPipeline:
             provider = str(history.attrs.get("data_provider", "unknown") or "unknown")
             counts[provider] = counts.get(provider, 0) + 1
         return counts
+
+    @staticmethod
+    def _trading_constraint_report(
+        *,
+        stock_info: pd.DataFrame,
+        histories: Dict[str, pd.DataFrame],
+        ranking: pd.DataFrame,
+        signal_date: pd.Timestamp,
+        trade_start_date: pd.Timestamp,
+        min_listing_days: int,
+    ) -> pd.DataFrame:
+        rows = []
+        list_dates = (
+            pd.to_datetime(stock_info["list_date"], errors="coerce")
+            if "list_date" in stock_info.columns
+            else pd.Series(pd.NaT, index=stock_info.index)
+        )
+        for stock_code in ranking.index:
+            reasons = []
+            list_date = list_dates.get(stock_code, pd.NaT)
+            if pd.notna(list_date):
+                listing_age_days = int((signal_date.normalize() - pd.Timestamp(list_date).normalize()).days)
+                if listing_age_days < min_listing_days:
+                    reasons.append(f"listing_age_lt_{min_listing_days}d")
+            else:
+                listing_age_days = np.nan
+
+            history = histories.get(stock_code)
+            signal_row = BacktestPipeline._history_row_at_or_before(history, signal_date)
+            trade_row = BacktestPipeline._history_row_on_or_after(history, trade_start_date)
+
+            if signal_row is not None and BacktestPipeline._is_st(signal_row):
+                reasons.append("st_at_signal")
+            if trade_row is None or pd.Timestamp(trade_row.name).normalize() != trade_start_date.normalize():
+                reasons.append("suspended_or_no_trade_row")
+                trade_status = ""
+                pct_change = np.nan
+                volume = np.nan
+            else:
+                trade_status = str(trade_row.get("交易状态", "")).strip()
+                pct_change = BacktestPipeline._number(trade_row.get("涨跌幅"))
+                volume = BacktestPipeline._number(trade_row.get("成交量"))
+                if trade_status and not BacktestPipeline._is_active_trade_status(trade_status):
+                    reasons.append("suspended")
+                if pd.notna(volume) and volume <= 0:
+                    reasons.append("zero_volume")
+                if BacktestPipeline._is_st(trade_row):
+                    reasons.append("st_at_trade")
+                if BacktestPipeline._is_limit_locked(stock_code, trade_row):
+                    reasons.append("limit_locked")
+
+            rows.append(
+                {
+                    "stock_code": stock_code,
+                    "signal_date": signal_date,
+                    "trade_start_date": trade_start_date,
+                    "tradable": len(reasons) == 0,
+                    "constraint_reason": "|".join(reasons),
+                    "listing_age_days": listing_age_days,
+                    "trade_status": trade_status,
+                    "trade_pct_change": pct_change,
+                    "trade_volume": volume,
+                }
+            )
+
+        return pd.DataFrame(rows).set_index("stock_code") if rows else pd.DataFrame()
+
+    @staticmethod
+    def _trading_constraint_counts(trading_constraints: pd.DataFrame) -> Dict[str, int]:
+        if trading_constraints.empty:
+            return {
+                "tradable_universe_count": 0,
+                "excluded_trading_constraint_count": 0,
+            }
+
+        counts = {
+            "tradable_universe_count": int(trading_constraints["tradable"].sum()),
+            "excluded_trading_constraint_count": int((~trading_constraints["tradable"]).sum()),
+        }
+        reason_counts: Dict[str, int] = {}
+        for reason_text in trading_constraints.loc[~trading_constraints["tradable"], "constraint_reason"].dropna():
+            for reason in str(reason_text).split("|"):
+                if reason:
+                    reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        counts["trading_constraint_reason_counts"] = json.dumps(
+            reason_counts,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        return counts
+
+    @staticmethod
+    def _history_row_at_or_before(history: Optional[pd.DataFrame], date: pd.Timestamp) -> Optional[pd.Series]:
+        if history is None or history.empty:
+            return None
+        rows = history.loc[history.index <= date]
+        return rows.iloc[-1] if not rows.empty else None
+
+    @staticmethod
+    def _history_row_on_or_after(history: Optional[pd.DataFrame], date: pd.Timestamp) -> Optional[pd.Series]:
+        if history is None or history.empty:
+            return None
+        rows = history.loc[history.index >= date]
+        return rows.iloc[0] if not rows.empty else None
+
+    @staticmethod
+    def _is_st(row: pd.Series) -> bool:
+        value = str(row.get("是否ST", "")).strip().lower()
+        if value in {"1", "true", "yes", "y", "st"}:
+            return True
+        try:
+            return float(value) == 1.0
+        except ValueError:
+            return False
+
+    @staticmethod
+    def _is_active_trade_status(value: object) -> bool:
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "y", "normal"}:
+            return True
+        try:
+            return float(text) == 1.0
+        except ValueError:
+            return False
+
+    @staticmethod
+    def _is_limit_locked(stock_code: str, row: pd.Series) -> bool:
+        pct_change = BacktestPipeline._number(row.get("涨跌幅"))
+        if pd.isna(pct_change):
+            return False
+        threshold = 19.8 if stock_code.startswith(("300", "301", "688")) else 9.8
+        return abs(pct_change) >= threshold
 
     @staticmethod
     def _mask_future_classifications(
