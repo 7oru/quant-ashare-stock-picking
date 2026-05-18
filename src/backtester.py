@@ -683,6 +683,7 @@ class BacktestPipeline:
 
         rows.extend(BacktestPipeline._portfolio_diagnostic_rows(factor_signals, rebalances))
         rows.extend(BacktestPipeline._group_stability_rows(factor_signals))
+        rows.extend(BacktestPipeline._neutralized_factor_rows(factor_signals, factor_columns))
         diagnostics = pd.DataFrame(rows)
         return diagnostics, BacktestPipeline._factor_diagnostics_markdown(diagnostics)
 
@@ -825,6 +826,101 @@ class BacktestPipeline:
                     }
                 )
         return rows
+
+    @staticmethod
+    def _neutralized_factor_rows(factor_signals: pd.DataFrame, factor_columns: List[str]) -> List[Dict[str, object]]:
+        rows = []
+        neutralizers = ["sector", "market_cap"]
+        if factor_signals.empty or not set(neutralizers).issubset(factor_signals.columns):
+            return rows
+
+        periods = factor_signals["signal_date"].nunique()
+        for factor in factor_columns:
+            ic_values = []
+            for _, group in factor_signals.groupby("signal_date"):
+                required = [factor, "forward_return", *neutralizers]
+                valid = group[required].dropna(subset=[factor, "forward_return"]).copy()
+                if len(valid) < 4:
+                    continue
+
+                factor_residual = BacktestPipeline._neutralize_series_by_groups(
+                    valid[factor],
+                    valid[neutralizers],
+                )
+                return_residual = BacktestPipeline._neutralize_series_by_groups(
+                    valid["forward_return"],
+                    valid[neutralizers],
+                )
+                residuals = pd.DataFrame(
+                    {
+                        "factor_residual": factor_residual,
+                        "return_residual": return_residual,
+                    }
+                ).dropna()
+                if (
+                    len(residuals) < 3
+                    or residuals["factor_residual"].nunique() < 2
+                    or residuals["return_residual"].nunique() < 2
+                ):
+                    continue
+                ic = residuals["factor_residual"].rank().corr(residuals["return_residual"].rank())
+                if pd.notna(ic):
+                    ic_values.append(float(ic))
+
+            rows.append(
+                {
+                    "metric": "neutralized_rank_ic_mean",
+                    "factor": factor,
+                    "group_type": "sector_market_cap",
+                    "group_value": "residual",
+                    "value": float(np.mean(ic_values)) if ic_values else np.nan,
+                    "observations": len(ic_values),
+                    "periods": periods,
+                    "notes": "Rank IC after residualizing factor score and forward return by sector and market-cap groups.",
+                }
+            )
+            rows.append(
+                {
+                    "metric": "neutralized_icir",
+                    "factor": factor,
+                    "group_type": "sector_market_cap",
+                    "group_value": "residual",
+                    "value": BacktestPipeline._icir(ic_values),
+                    "observations": len(ic_values),
+                    "periods": periods,
+                    "notes": "Neutralized Rank IC mean divided by neutralized Rank IC standard deviation.",
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _neutralize_series_by_groups(values: pd.Series, groups: pd.DataFrame) -> pd.Series:
+        frame = pd.concat(
+            [
+                pd.to_numeric(values, errors="coerce").rename("_value"),
+                groups.fillna("unknown").astype(str),
+            ],
+            axis=1,
+        ).dropna(subset=["_value"])
+        if frame.empty:
+            return pd.Series(dtype="float64")
+
+        design_parts = [pd.Series(1.0, index=frame.index, name="_intercept")]
+        for column in groups.columns:
+            dummies = pd.get_dummies(frame[column], prefix=column, dtype=float)
+            if dummies.shape[1] > 1:
+                dummies = dummies.iloc[:, 1:]
+            design_parts.append(dummies)
+
+        design = pd.concat(design_parts, axis=1)
+        y = frame["_value"].astype(float)
+        try:
+            beta, *_ = np.linalg.lstsq(design.to_numpy(dtype=float), y.to_numpy(dtype=float), rcond=None)
+        except np.linalg.LinAlgError:
+            return y - y.mean()
+
+        fitted = pd.Series(design.to_numpy(dtype=float).dot(beta), index=design.index)
+        return y - fitted
 
     @staticmethod
     def _factor_diagnostics_markdown(diagnostics: pd.DataFrame) -> str:

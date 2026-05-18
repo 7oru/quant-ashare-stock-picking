@@ -190,6 +190,33 @@ class BacktesterPointInTimeTests(unittest.TestCase):
         self.assertIn("sector=compute", summary)
         self.assertIn("Factor Diagnostics", summary)
 
+    def test_factor_diagnostics_reports_sector_market_cap_neutralized_ic(self):
+        factor_signals = pd.DataFrame(
+            [
+                {"signal_date": "2024-03-31", "stock_code": "A", "sector": "compute", "market_cap": "large", "ai_exposure": "high", "composite_score": 90, "momentum_score": 90, "growth_score": 50, "valuation_score": 50, "quality_score": 50, "volatility_score": 50, "liquidity_score": 50, "forward_return": 0.10, "selected": True, "target_weight": 0.5},
+                {"signal_date": "2024-03-31", "stock_code": "B", "sector": "compute", "market_cap": "large", "ai_exposure": "high", "composite_score": 80, "momentum_score": 80, "growth_score": 50, "valuation_score": 50, "quality_score": 50, "volatility_score": 50, "liquidity_score": 50, "forward_return": 0.08, "selected": True, "target_weight": 0.5},
+                {"signal_date": "2024-03-31", "stock_code": "C", "sector": "power", "market_cap": "small", "ai_exposure": "low", "composite_score": 40, "momentum_score": 40, "growth_score": 50, "valuation_score": 50, "quality_score": 50, "volatility_score": 50, "liquidity_score": 50, "forward_return": 0.02, "selected": False, "target_weight": 0.0},
+                {"signal_date": "2024-03-31", "stock_code": "D", "sector": "power", "market_cap": "small", "ai_exposure": "low", "composite_score": 30, "momentum_score": 30, "growth_score": 50, "valuation_score": 50, "quality_score": 50, "volatility_score": 50, "liquidity_score": 50, "forward_return": 0.01, "selected": False, "target_weight": 0.0},
+                {"signal_date": "2024-04-30", "stock_code": "A", "sector": "compute", "market_cap": "large", "ai_exposure": "high", "composite_score": 92, "momentum_score": 92, "growth_score": 50, "valuation_score": 50, "quality_score": 50, "volatility_score": 50, "liquidity_score": 50, "forward_return": 0.11, "selected": True, "target_weight": 0.5},
+                {"signal_date": "2024-04-30", "stock_code": "B", "sector": "compute", "market_cap": "large", "ai_exposure": "high", "composite_score": 82, "momentum_score": 82, "growth_score": 50, "valuation_score": 50, "quality_score": 50, "volatility_score": 50, "liquidity_score": 50, "forward_return": 0.09, "selected": True, "target_weight": 0.5},
+                {"signal_date": "2024-04-30", "stock_code": "C", "sector": "power", "market_cap": "small", "ai_exposure": "low", "composite_score": 42, "momentum_score": 42, "growth_score": 50, "valuation_score": 50, "quality_score": 50, "volatility_score": 50, "liquidity_score": 50, "forward_return": 0.03, "selected": False, "target_weight": 0.0},
+                {"signal_date": "2024-04-30", "stock_code": "D", "sector": "power", "market_cap": "small", "ai_exposure": "low", "composite_score": 32, "momentum_score": 32, "growth_score": 50, "valuation_score": 50, "quality_score": 50, "volatility_score": 50, "liquidity_score": 50, "forward_return": 0.02, "selected": False, "target_weight": 0.0},
+            ]
+        )
+        rebalances = factor_signals.loc[factor_signals["selected"], ["signal_date", "stock_code", "target_weight"]]
+
+        diagnostics, summary = BacktestPipeline._factor_diagnostics(factor_signals, rebalances)
+        neutralized = diagnostics.loc[
+            (diagnostics["metric"] == "neutralized_rank_ic_mean")
+            & (diagnostics["factor"] == "composite_score")
+        ].iloc[0]
+
+        self.assertEqual(neutralized["group_type"], "sector_market_cap")
+        self.assertEqual(neutralized["group_value"], "residual")
+        self.assertEqual(neutralized["observations"], 2)
+        self.assertGreater(neutralized["value"], 0)
+        self.assertIn("neutralized_rank_ic_mean", summary)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -20,7 +20,7 @@
 
 - [x] 增加 Rank IC、ICIR、分组收益、单调性、换手率、持仓衰减等因子检验输出。
 - [x] 支持按行业、市值、AI 暴露分组做稳定性分析。
-- [ ] 增加行业/市值中性化后的因子表现，避免主题暴露误判成 alpha。
+- [x] 增加行业/市值中性化后的因子表现，避免主题暴露误判成 alpha。
 - [x] 将因子检验结果写入 `results/<timestamp>/factor_diagnostics.csv` 和摘要文本。
 
 ## P1: A-Share Trading Constraints

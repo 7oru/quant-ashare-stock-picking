@@ -205,7 +205,7 @@ python backtest_pipeline.py \
 
 每次回测还会写出 `backtest_factor_lineage.csv` 和 `backtest_factor_lineage.md`，显式标记各类信号的数据血缘：动量和波动率来自严格点时历史 K 线；流动性主要来自点时成交/换手/成交额；成长和质量在缺少点时基本面时使用价格、风险和流动性代理；估值在回测中禁用当前/修订财务字段并使用中性占位；行业调整依赖股票池是否提供分类 as-of 日期。
 
-回测还会输出 `factor_diagnostics.csv` 和 `factor_diagnostics.md`，基于每个调仓信号日的全 universe 因子分数和下一持有期收益计算 Rank IC、ICIR、分组收益 spread、单调性、组合换手率和持仓收益衰减。诊断表也会按行业、市值分组和 AI 暴露输出平均前瞻收益与入选率，便于检查信号是否只在某类主题或风格里有效。样本期很短时这些诊断只用于流程检查，不应过度解读统计显著性。
+回测还会输出 `factor_diagnostics.csv` 和 `factor_diagnostics.md`，基于每个调仓信号日的全 universe 因子分数和下一持有期收益计算 Rank IC、ICIR、分组收益 spread、单调性、组合换手率和持仓收益衰减。诊断表也会按行业、市值分组和 AI 暴露输出平均前瞻收益与入选率，并计算剥离行业/市值组别暴露后的中性化 Rank IC，便于检查信号是否只在某类主题或风格里有效。样本期很短时这些诊断只用于流程检查，不应过度解读统计显著性。
 
 ## 数据缓存
 
