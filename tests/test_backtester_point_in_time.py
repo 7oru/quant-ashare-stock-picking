@@ -254,6 +254,26 @@ class BacktesterPointInTimeTests(unittest.TestCase):
         self.assertEqual(counts["tradable_universe_count"], 1)
         self.assertEqual(counts["excluded_trading_constraint_count"], 4)
 
+    def test_transaction_cost_charges_sell_side_stamp_tax(self):
+        previous = pd.Series({"A": 0.6, "B": 0.4})
+        current = pd.Series({"A": 0.3, "C": 0.5})
+
+        cost = BacktestPipeline._transaction_cost(
+            previous=previous,
+            current=current,
+            commission_bps=10.0,
+            stamp_tax_bps=5.0,
+            transfer_fee_bps=0.1,
+            slippage_bps=5.0,
+            impact_bps=2.0,
+        )
+
+        self.assertAlmostEqual(cost["buy_turnover"], 0.5)
+        self.assertAlmostEqual(cost["sell_turnover"], 0.7)
+        self.assertAlmostEqual(cost["turnover"], 1.2)
+        expected_cost = (0.5 * 17.1 + 0.7 * 22.1) / 10000
+        self.assertAlmostEqual(cost["cost_rate"], expected_cost)
+
     @staticmethod
     def _history(dates, is_st, trade_status, pct_change):
         return pd.DataFrame(

@@ -50,6 +50,10 @@ class BacktestPipeline:
         lookback_days: int = 180,
         top_n: int = 10,
         fee_bps: float = 10.0,
+        stamp_tax_bps: float = 5.0,
+        transfer_fee_bps: float = 0.1,
+        slippage_bps: float = 5.0,
+        impact_bps: float = 0.0,
         output_dir: str = "results",
         output_timestamp: str | None = None,
         candidate_visible_dates: Optional[Dict[str, str]] = None,
@@ -161,14 +165,23 @@ class BacktestPipeline:
                 .mean(axis=1, skipna=True)
                 .fillna(0)
             )
-            turnover = self._turnover(previous_weights, weights)
-            fee_rate = turnover * fee_bps / 10000
+            cost = self._transaction_cost(
+                previous=previous_weights,
+                current=weights,
+                commission_bps=fee_bps,
+                stamp_tax_bps=stamp_tax_bps,
+                transfer_fee_bps=transfer_fee_bps,
+                slippage_bps=slippage_bps,
+                impact_bps=impact_bps,
+            )
+            turnover = cost["turnover"]
+            fee_rate = cost["cost_rate"]
             equity *= max(0, 1 - fee_rate)
 
             log(
                 f"{signal_date.date()} 调仓: {len(weights)} 只, "
                 f"可交易 {len(tradable_ranking)}/{len(ranking)} 只, "
-                f"换手 {turnover:.2f}, 费用 {fee_rate:.4%}, "
+                f"换手 {turnover:.2f}, 成本 {fee_rate:.4%}, "
                 f"现金 {max(0, 1 - weights.sum()):.1%}"
             )
 
@@ -185,6 +198,9 @@ class BacktestPipeline:
                         "sector": row.get("sector"),
                         "rank": rank,
                         "target_weight": weights.loc[stock_code],
+                        "buy_turnover": cost["buy_turnover"],
+                        "sell_turnover": cost["sell_turnover"],
+                        "transaction_cost_rate": fee_rate,
                         "composite_score": row.get("composite_score"),
                         "momentum_score": row.get("momentum_score"),
                         "quality_score": row.get("quality_score"),
@@ -214,6 +230,9 @@ class BacktestPipeline:
                         "benchmark_equity": benchmark_equity,
                         "cash_weight": max(0.0, 1 - float(weights.sum())),
                         "turnover": turnover if trade_date == trade_dates[0] else 0.0,
+                        "buy_turnover": cost["buy_turnover"] if trade_date == trade_dates[0] else 0.0,
+                        "sell_turnover": cost["sell_turnover"] if trade_date == trade_dates[0] else 0.0,
+                        "transaction_cost_rate": fee_rate if trade_date == trade_dates[0] else 0.0,
                     }
                 )
 
@@ -241,7 +260,11 @@ class BacktestPipeline:
             "rebalance": rebalance,
             "lookback_days": lookback_days,
             "top_n": top_n,
-            "fee_bps": fee_bps,
+            "commission_bps": fee_bps,
+            "stamp_tax_bps": stamp_tax_bps,
+            "transfer_fee_bps": transfer_fee_bps,
+            "slippage_bps": slippage_bps,
+            "impact_bps": impact_bps,
             "min_listing_days": min_listing_days,
             "as_of_date": end_date,
             "point_in_time_stock_pool_policy": (
@@ -263,6 +286,10 @@ class BacktestPipeline:
             ),
             "trading_constraint_policy": (
                 "exclude suspended, ST, newly listed, and limit-locked names from rebalance buys"
+            ),
+            "transaction_cost_policy": (
+                "rebalance at next trading day to model T+1 signal execution; "
+                "charge commission/transfer/slippage/impact on buys and sells, plus stamp tax on sells"
             ),
             "candidate_visible_dates": self._json_visible_dates(candidate_visible_dates),
             **stock_pool_metadata,
@@ -1140,6 +1167,31 @@ class BacktestPipeline:
     def _turnover(previous: pd.Series, current: pd.Series) -> float:
         all_index = previous.index.union(current.index)
         return float((current.reindex(all_index).fillna(0) - previous.reindex(all_index).fillna(0)).abs().sum())
+
+    @staticmethod
+    def _transaction_cost(
+        *,
+        previous: pd.Series,
+        current: pd.Series,
+        commission_bps: float,
+        stamp_tax_bps: float,
+        transfer_fee_bps: float,
+        slippage_bps: float,
+        impact_bps: float,
+    ) -> Dict[str, float]:
+        all_index = previous.index.union(current.index)
+        delta = current.reindex(all_index).fillna(0) - previous.reindex(all_index).fillna(0)
+        buy_turnover = float(delta.clip(lower=0).sum())
+        sell_turnover = float((-delta.clip(upper=0)).sum())
+        buy_cost_bps = commission_bps + transfer_fee_bps + slippage_bps + impact_bps
+        sell_cost_bps = commission_bps + transfer_fee_bps + slippage_bps + impact_bps + stamp_tax_bps
+        cost_rate = (buy_turnover * buy_cost_bps + sell_turnover * sell_cost_bps) / 10000
+        return {
+            "turnover": float(buy_turnover + sell_turnover),
+            "buy_turnover": buy_turnover,
+            "sell_turnover": sell_turnover,
+            "cost_rate": float(cost_rate),
+        }
 
     @staticmethod
     def _summary(equity_curve: pd.DataFrame, initial_capital: float, rebalance_count: int) -> pd.DataFrame:

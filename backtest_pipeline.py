@@ -30,7 +30,11 @@ def main():
     )
     parser.add_argument("--lookback-days", type=int, default=180, help="每次调仓使用的历史交易日窗口")
     parser.add_argument("--top-n", type=int, default=10, help="每次持仓股票数量")
-    parser.add_argument("--fee-bps", type=float, default=10.0, help="单边交易成本, bps")
+    parser.add_argument("--fee-bps", type=float, default=10.0, help="佣金成本, bps；为兼容旧参数名保留")
+    parser.add_argument("--stamp-tax-bps", type=float, default=5.0, help="卖出印花税, bps")
+    parser.add_argument("--transfer-fee-bps", type=float, default=0.1, help="买卖双边过户费, bps")
+    parser.add_argument("--slippage-bps", type=float, default=5.0, help="买卖双边滑点, bps")
+    parser.add_argument("--impact-bps", type=float, default=0.0, help="买卖双边冲击成本, bps")
     parser.add_argument("--min-listing-days", type=int, default=60, help="上市未满该自然日数的股票不参与调仓买入")
     parser.add_argument("--output-dir", type=str, default="results", help="基础输出目录，每次运行会创建 <timestamp> 子目录")
     parser.add_argument(
@@ -56,6 +60,10 @@ def main():
         lookback_days=args.lookback_days,
         top_n=args.top_n,
         fee_bps=args.fee_bps,
+        stamp_tax_bps=args.stamp_tax_bps,
+        transfer_fee_bps=args.transfer_fee_bps,
+        slippage_bps=args.slippage_bps,
+        impact_bps=args.impact_bps,
         output_dir=args.output_dir,
         candidate_visible_dates=candidate_visible_dates,
         min_listing_days=args.min_listing_days,
