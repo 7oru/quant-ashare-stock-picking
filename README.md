@@ -215,6 +215,8 @@ python backtest_pipeline.py \
 
 调仓买入前会用 BaoStock 日线字段做基础交易约束过滤：停牌或无当日交易行、ST、上市未满 `--min-listing-days`、以及涨跌停锁定的股票不会进入实际持仓权重。组合从调仓信号日后的下一个交易日开始执行，避免同日信号同日成交；交易成本按买入和卖出拆开计算，买卖双边收佣金、过户费、滑点和冲击成本，卖出侧额外收印花税。容量约束使用执行日成交额乘以 `--max-participation-rate` 估算单票单日可交易金额，买入和卖出超过容量时只做部分成交并保留现金或剩余持仓。`backtest_point_in_time.csv` 会记录每个调仓日的可交易股票数、交易约束剔除数量和原因计数。
 
+`backtest_rebalances.csv` 会保留交易执行状态：正常成交写为 `filled`，交易约束导致无法买入写为 `blocked_buy`，持仓因停牌、ST 或涨跌停等约束无法卖出写为 `blocked_sell`，容量不足导致的部分成交写为 `partial_buy` 或 `partial_sell`。对应原因写在 `trade_constraint_reason`、`capacity_reason` 和相关容量字段里。
+
 ## 数据缓存
 
 AkShare 的部分接口比较慢，项目默认把结果缓存到：

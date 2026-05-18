@@ -286,6 +286,7 @@ class BacktesterPointInTimeTests(unittest.TestCase):
             desired=desired,
             previous=previous,
             histories=histories,
+            trading_constraints=pd.DataFrame(index=["A", "B"]),
             trade_start_date=pd.Timestamp("2024-04-01"),
             capital=10000.0,
             max_participation_rate=0.1,
@@ -295,6 +296,45 @@ class BacktesterPointInTimeTests(unittest.TestCase):
         self.assertAlmostEqual(adjusted.loc["B"], 0.02)
         self.assertEqual(report["A"]["capacity_reason"], "sell_capacity_limited")
         self.assertEqual(report["B"]["capacity_reason"], "buy_capacity_limited")
+
+    def test_blocked_buy_records_and_sell_constraints_are_marked(self):
+        ranking = pd.DataFrame(
+            [
+                {"stock_code": "A", "stock_name": "Alpha", "sector": "compute", "rank": 1, "composite_score": 90, "momentum_score": 80, "quality_score": 70, "liquidity_score": 60},
+                {"stock_code": "B", "stock_name": "Beta", "sector": "power", "rank": 2, "composite_score": 80, "momentum_score": 70, "quality_score": 60, "liquidity_score": 50},
+            ]
+        ).set_index("stock_code")
+        constraints = pd.DataFrame(
+            [
+                {"stock_code": "A", "tradable": False, "constraint_reason": "limit_locked"},
+                {"stock_code": "B", "tradable": False, "constraint_reason": "suspended"},
+            ]
+        ).set_index("stock_code")
+
+        blocked = BacktestPipeline._blocked_buy_records(
+            signal_date=pd.Timestamp("2024-03-31"),
+            trade_start_date=pd.Timestamp("2024-04-01"),
+            ranking=ranking,
+            unconstrained_desired=pd.Series({"A": 0.6}),
+            trading_constraints=constraints,
+            eligible_universe_count=2,
+        )
+        self.assertEqual(blocked[0]["execution_status"], "blocked_buy")
+        self.assertEqual(blocked[0]["trade_constraint_reason"], "limit_locked")
+
+        adjusted, report = BacktestPipeline._apply_capacity_limits(
+            desired=pd.Series(dtype="float64"),
+            previous=pd.Series({"B": 0.4}),
+            histories={"B": pd.DataFrame({"成交额": [10000.0]}, index=pd.DatetimeIndex([pd.Timestamp("2024-04-01")]))},
+            trading_constraints=constraints,
+            trade_start_date=pd.Timestamp("2024-04-01"),
+            capital=10000.0,
+            max_participation_rate=0.1,
+        )
+        status = BacktestPipeline._execution_status("B", report)
+        self.assertAlmostEqual(adjusted.loc["B"], 0.4)
+        self.assertEqual(report["B"]["capacity_reason"], "sell_trading_constraint_blocked")
+        self.assertEqual(status["execution_status"], "blocked_sell")
 
     @staticmethod
     def _history(dates, is_st, trade_status, pct_change):

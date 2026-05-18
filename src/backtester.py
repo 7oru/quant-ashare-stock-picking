@@ -134,6 +134,7 @@ class BacktestPipeline:
             composite_score = self.factor_calculator.calculate_composite_score(factors)
 
             ranking = self._build_ranking(available_stock_info, factors, composite_score)
+            unconstrained_desired_weights = self._target_weights(ranking, top_n)
             trading_constraints = self._trading_constraint_report(
                 stock_info=available_stock_info,
                 histories=eligible_histories,
@@ -148,10 +149,19 @@ class BacktestPipeline:
             point_in_time_records.append(point_in_time_record)
 
             desired_weights = self._target_weights(tradable_ranking, top_n)
+            blocked_buy_records = self._blocked_buy_records(
+                signal_date=signal_date,
+                trade_start_date=trade_dates[0],
+                ranking=ranking,
+                unconstrained_desired=unconstrained_desired_weights,
+                trading_constraints=trading_constraints,
+                eligible_universe_count=point_in_time_record["eligible_universe_count"],
+            )
             weights, capacity_report = self._apply_capacity_limits(
                 desired=desired_weights,
                 previous=previous_weights,
                 histories=eligible_histories,
+                trading_constraints=trading_constraints,
                 trade_start_date=trade_dates[0],
                 capital=equity,
                 max_participation_rate=max_participation_rate,
@@ -194,10 +204,12 @@ class BacktestPipeline:
                 f"现金 {max(0, 1 - weights.sum()):.1%}"
             )
 
+            rebalance_records.extend(blocked_buy_records)
             for rank, (stock_code, row) in enumerate(ranking.reindex(weights.index).iterrows(), 1):
                 history = eligible_histories.get(stock_code)
                 data_provider = history.attrs.get("data_provider", "unknown") if history is not None else "unknown"
                 provider_adjustment = history.attrs.get("provider_adjustment", "") if history is not None else ""
+                execution_status = self._execution_status(stock_code, capacity_report)
                 rebalance_records.append(
                     {
                         "signal_date": signal_date,
@@ -210,6 +222,9 @@ class BacktestPipeline:
                         "target_weight": weights.loc[stock_code],
                         "capacity_limited": bool(capacity_report.get(stock_code, {}).get("capacity_limited", False)),
                         "capacity_reason": capacity_report.get(stock_code, {}).get("capacity_reason", ""),
+                        "trade_action": execution_status["trade_action"],
+                        "execution_status": execution_status["execution_status"],
+                        "trade_constraint_reason": execution_status["trade_constraint_reason"],
                         "capacity_weight": capacity_report.get(stock_code, {}).get("capacity_weight", np.nan),
                         "estimated_trade_amount": capacity_report.get(stock_code, {}).get("estimated_trade_amount", np.nan),
                         "buy_turnover": cost["buy_turnover"],
@@ -1217,6 +1232,7 @@ class BacktestPipeline:
         desired: pd.Series,
         previous: pd.Series,
         histories: Dict[str, pd.DataFrame],
+        trading_constraints: pd.DataFrame,
         trade_start_date: pd.Timestamp,
         capital: float,
         max_participation_rate: float,
@@ -1235,7 +1251,13 @@ class BacktestPipeline:
             capacity_weight = np.inf if pd.isna(amount) else float(amount * max_participation_rate / capital)
             limited_delta = delta
             reason = ""
-            if np.isfinite(capacity_weight) and abs(delta) > capacity_weight:
+            trade_constraint_reason = ""
+            if stock_code in trading_constraints.index:
+                trade_constraint_reason = str(trading_constraints.loc[stock_code].get("constraint_reason", "") or "")
+            if delta < 0 and trade_constraint_reason:
+                limited_delta = 0.0
+                reason = "sell_trading_constraint_blocked"
+            elif np.isfinite(capacity_weight) and abs(delta) > capacity_weight:
                 limited_delta = np.sign(delta) * capacity_weight
                 reason = "buy_capacity_limited" if delta > 0 else "sell_capacity_limited"
 
@@ -1245,6 +1267,7 @@ class BacktestPipeline:
             report[stock_code] = {
                 "capacity_limited": bool(reason),
                 "capacity_reason": reason,
+                "trade_constraint_reason": trade_constraint_reason,
                 "capacity_weight": capacity_weight if np.isfinite(capacity_weight) else np.nan,
                 "estimated_trade_amount": abs(limited_delta) * capital,
                 "desired_weight": desired_weight,
@@ -1253,6 +1276,89 @@ class BacktestPipeline:
             }
 
         return pd.Series(adjusted, dtype="float64").sort_values(ascending=False), report
+
+    @staticmethod
+    def _blocked_buy_records(
+        *,
+        signal_date: pd.Timestamp,
+        trade_start_date: pd.Timestamp,
+        ranking: pd.DataFrame,
+        unconstrained_desired: pd.Series,
+        trading_constraints: pd.DataFrame,
+        eligible_universe_count: int,
+    ) -> List[Dict[str, object]]:
+        records = []
+        if unconstrained_desired.empty or trading_constraints.empty:
+            return records
+        blocked_codes = [
+            stock_code
+            for stock_code in unconstrained_desired.index
+            if stock_code in trading_constraints.index and not bool(trading_constraints.loc[stock_code, "tradable"])
+        ]
+        for stock_code in blocked_codes:
+            row = ranking.loc[stock_code]
+            constraint_reason = trading_constraints.loc[stock_code, "constraint_reason"]
+            records.append(
+                {
+                    "signal_date": signal_date,
+                    "trade_start_date": trade_start_date,
+                    "stock_code": stock_code,
+                    "stock_name": row.get("stock_name"),
+                    "sector": row.get("sector"),
+                    "rank": row.get("rank"),
+                    "desired_weight": unconstrained_desired.get(stock_code, 0.0),
+                    "target_weight": 0.0,
+                    "capacity_limited": False,
+                    "capacity_reason": "",
+                    "trade_action": "buy",
+                    "execution_status": "blocked_buy",
+                    "trade_constraint_reason": constraint_reason,
+                    "capacity_weight": np.nan,
+                    "estimated_trade_amount": 0.0,
+                    "buy_turnover": 0.0,
+                    "sell_turnover": 0.0,
+                    "transaction_cost_rate": 0.0,
+                    "composite_score": row.get("composite_score"),
+                    "momentum_score": row.get("momentum_score"),
+                    "quality_score": row.get("quality_score"),
+                    "liquidity_score": row.get("liquidity_score", 50),
+                    "data_provider": "",
+                    "provider_adjustment": "",
+                    "holding_return": np.nan,
+                    "weighted_contribution": 0.0,
+                    "eligible_universe_count": eligible_universe_count,
+                }
+            )
+        return records
+
+    @staticmethod
+    def _execution_status(stock_code: str, capacity_report: Dict[str, Dict[str, object]]) -> Dict[str, str]:
+        report = capacity_report.get(stock_code, {})
+        previous_weight = float(report.get("previous_weight", 0.0) or 0.0)
+        desired_weight = float(report.get("desired_weight", 0.0) or 0.0)
+        final_weight = float(report.get("final_weight", 0.0) or 0.0)
+        if desired_weight > previous_weight:
+            trade_action = "buy"
+        elif desired_weight < previous_weight:
+            trade_action = "sell"
+        else:
+            trade_action = "hold"
+
+        capacity_reason = str(report.get("capacity_reason", "") or "")
+        trade_constraint_reason = str(report.get("trade_constraint_reason", "") or "")
+        if capacity_reason == "sell_trading_constraint_blocked":
+            execution_status = "blocked_sell"
+        elif capacity_reason in {"buy_capacity_limited", "sell_capacity_limited"}:
+            execution_status = "partial_buy" if trade_action == "buy" else "partial_sell"
+        elif final_weight == desired_weight:
+            execution_status = "filled"
+        else:
+            execution_status = "partial"
+        return {
+            "trade_action": trade_action,
+            "execution_status": execution_status,
+            "trade_constraint_reason": trade_constraint_reason,
+        }
 
     @staticmethod
     def _trade_start_amount(history: Optional[pd.DataFrame], trade_start_date: pd.Timestamp) -> float:
