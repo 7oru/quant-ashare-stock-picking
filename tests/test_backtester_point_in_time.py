@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 import sys
 import tempfile
+import json
 
 import pandas as pd
 
@@ -126,8 +127,19 @@ class BacktesterPointInTimeTests(unittest.TestCase):
                 portfolio_risk=pd.DataFrame(
                     [{"signal_date": pd.Timestamp("2024-03-01"), "metric": "industry_exposure", "value": 0.3}]
                 ),
+                history_fetch_log=pd.DataFrame(
+                    [{"stock_code": "000001.SZ", "provider": "baostock", "cache_hit": True, "cache_path": "/tmp/cache.pkl", "rows": 60}]
+                ),
+                exception_log=[{"stage": "fetch_history", "stock_code": "000002.SZ", "error": "network"}],
                 output_dir=tmpdir,
-                run_config={"as_of_date": "2024-03-31"},
+                run_config={
+                    "as_of_date": "2024-03-31",
+                    "git_commit": "abc123",
+                    "stock_pool_path": "pool.csv",
+                    "stock_pool_sha256": "hash",
+                    "stock_pool_rows": 2,
+                    "stock_pool_columns": "stock_code",
+                },
                 as_of_date="2024-03-31",
                 output_timestamp="run",
             )
@@ -141,6 +153,9 @@ class BacktesterPointInTimeTests(unittest.TestCase):
             factor_diagnostics = pd.read_csv(paths["factor_diagnostics"])
             factor_diagnostics_summary = Path(paths["factor_diagnostics_summary"]).read_text(encoding="utf-8")
             portfolio_risk = pd.read_csv(paths["portfolio_risk"])
+            history_fetch_log = pd.read_csv(paths["history_fetch_log"])
+            exception_log = json.loads(Path(paths["exception_log"]).read_text(encoding="utf-8"))
+            run_metadata = json.loads(Path(paths["run_metadata"]).read_text(encoding="utf-8"))
 
         self.assertEqual(summary.loc[0, "as_of_date"], "2024-03-31")
         self.assertEqual(equity.loc[0, "as_of_date"], "2024-03-04")
@@ -154,6 +169,12 @@ class BacktesterPointInTimeTests(unittest.TestCase):
         self.assertIn("Factor Diagnostics", factor_diagnostics_summary)
         self.assertEqual(portfolio_risk.loc[0, "as_of_date"], "2024-03-01")
         self.assertEqual(portfolio_risk.loc[0, "metric"], "industry_exposure")
+        self.assertEqual(history_fetch_log.loc[0, "provider"], "baostock")
+        self.assertEqual(exception_log[0]["error"], "network")
+        self.assertEqual(run_metadata["git_commit"], "abc123")
+        self.assertEqual(run_metadata["stock_pool"]["sha256"], "hash")
+        self.assertEqual(run_metadata["data_fetch"]["cache_hits"], 1)
+        self.assertIn("summary", run_metadata["outputs"])
 
     def test_factor_lineage_marks_strict_and_proxy_factors(self):
         lineage = BacktestPipeline._factor_lineage("2024-03-31")

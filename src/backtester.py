@@ -18,7 +18,7 @@ from .data_cache import TmpDataCache
 from .factor_calculator import FactorCalculator
 from .market_features import calculate_price_features
 from .market_data_providers import get_hist_dataframe_with_fallback
-from .results_manager import create_timestamped_result_dir, describe_stock_pool
+from .results_manager import create_timestamped_result_dir, current_git_commit, describe_stock_pool
 
 
 def log(msg):
@@ -39,6 +39,8 @@ class BacktestPipeline:
         self.factor_calculator = FactorCalculator()
         self.position_limits = POSITION_LIMITS
         self.data_cache = TmpDataCache()
+        self._last_history_fetch_events: List[Dict[str, object]] = []
+        self._last_exception_log: List[Dict[str, object]] = []
 
     def run(
         self,
@@ -303,6 +305,8 @@ class BacktestPipeline:
         factor_diagnostics, factor_diagnostics_summary = self._factor_diagnostics(factor_signals, rebalances)
         portfolio_risk = pd.DataFrame(portfolio_risk_records)
         summary = self._summary(equity_curve, initial_capital, len(rebalance_dates))
+        history_fetch_log = pd.DataFrame(self._last_history_fetch_events)
+        exception_log = list(self._last_exception_log)
 
         run_config = {
             "csv_path": csv_path,
@@ -321,6 +325,7 @@ class BacktestPipeline:
             "max_drawdown_budget": max_drawdown_budget,
             "min_listing_days": min_listing_days,
             "as_of_date": end_date,
+            "git_commit": current_git_commit(Path(__file__).resolve().parents[1]) or "",
             "point_in_time_stock_pool_policy": (
                 "filter stock_pool snapshot by list_date <= signal_date, "
                 "candidate_visible_dates <= signal_date, and row-level "
@@ -363,6 +368,8 @@ class BacktestPipeline:
             factor_diagnostics,
             factor_diagnostics_summary,
             portfolio_risk,
+            history_fetch_log,
+            exception_log,
             output_dir,
             run_config,
             as_of_date=end_date,
@@ -376,6 +383,8 @@ class BacktestPipeline:
             "factor_diagnostics": factor_diagnostics,
             "factor_diagnostics_summary": factor_diagnostics_summary,
             "portfolio_risk": portfolio_risk,
+            "history_fetch_log": history_fetch_log,
+            "exception_log": exception_log,
             "paths": paths,
             "output_dir": str(Path(paths["summary"]).parent),
         }
@@ -389,6 +398,8 @@ class BacktestPipeline:
     ) -> Dict[str, pd.DataFrame]:
         fetch_start = start - pd.Timedelta(days=int(lookback_days * 1.8) + 30)
         histories: Dict[str, pd.DataFrame] = {}
+        fetch_events: List[Dict[str, object]] = []
+        exception_log: List[Dict[str, object]] = []
         total = len(stock_codes)
 
         for i, code in enumerate(stock_codes, 1):
@@ -407,6 +418,9 @@ class BacktestPipeline:
                 df = df.copy()
                 data_provider = df.attrs.get("data_provider", "unknown")
                 provider_adjustment = df.attrs.get("provider_adjustment", "qfq")
+                cache_hit = bool(df.attrs.get("cache_hit", False))
+                cache_path = str(df.attrs.get("cache_path", "") or "")
+                primary_error = str(df.attrs.get("primary_error", "") or "")
                 df["日期"] = pd.to_datetime(df["日期"])
                 df = df.sort_values("日期").set_index("日期")
                 df["收盘"] = pd.to_numeric(df["收盘"], errors="coerce")
@@ -414,11 +428,33 @@ class BacktestPipeline:
                 if len(df) >= 60:
                     df.attrs["data_provider"] = data_provider
                     df.attrs["provider_adjustment"] = provider_adjustment
+                    df.attrs["cache_hit"] = cache_hit
+                    df.attrs["cache_path"] = cache_path
+                    df.attrs["primary_error"] = primary_error
+                    fetch_events.append(
+                        {
+                            "stock_code": code,
+                            "provider": data_provider,
+                            "cache_hit": cache_hit,
+                            "cache_path": cache_path,
+                            "primary_error": primary_error,
+                            "rows": int(len(df)),
+                        }
+                    )
                     histories[code] = df
             except Exception as exc:
                 log(f"  获取失败: {code} - {exc}")
+                exception_log.append(
+                    {
+                        "stage": "fetch_history",
+                        "stock_code": code,
+                        "error": str(exc),
+                    }
+                )
 
         log(f"历史行情获取完成: {len(histories)}/{total} 只")
+        self._last_history_fetch_events = fetch_events
+        self._last_exception_log = exception_log
         return histories
 
     def _get_hist_dataframe(
@@ -441,7 +477,11 @@ class BacktestPipeline:
             log(f"  使用BaoStock回测日线: {symbol}")
         elif provider == "yahoo":
             log(f"  BaoStock失败，使用Yahoo回测日线: {symbol} ({primary_error})")
-        return hist_df.copy()
+        output = hist_df.copy()
+        output.attrs["cache_hit"] = cache_hit
+        output.attrs["cache_path"] = str(cache_path or "")
+        output.attrs["primary_error"] = primary_error or ""
+        return output
 
     @staticmethod
     def _build_calendar(
@@ -1613,6 +1653,8 @@ class BacktestPipeline:
         factor_diagnostics: pd.DataFrame,
         factor_diagnostics_summary: str,
         portfolio_risk: pd.DataFrame,
+        history_fetch_log: pd.DataFrame,
+        exception_log: List[Dict[str, object]],
         output_dir: str,
         run_config: Dict[str, object],
         as_of_date: str,
@@ -1630,6 +1672,9 @@ class BacktestPipeline:
             "factor_diagnostics": str(run_dir / "factor_diagnostics.csv"),
             "factor_diagnostics_summary": str(run_dir / "factor_diagnostics.md"),
             "portfolio_risk": str(run_dir / "portfolio_risk.csv"),
+            "history_fetch_log": str(run_dir / "backtest_data_fetch_log.csv"),
+            "exception_log": str(run_dir / "backtest_exceptions.json"),
+            "run_metadata": str(run_dir / "backtest_run_metadata.json"),
         }
         config = pd.DataFrame([run_config])
         summary_output = summary.copy()
@@ -1676,7 +1721,60 @@ class BacktestPipeline:
             else:
                 portfolio_risk_output.insert(0, "as_of_date", as_of_date)
         portfolio_risk_output.to_csv(paths["portfolio_risk"], index=False)
+        history_fetch_log.to_csv(paths["history_fetch_log"], index=False)
+        Path(paths["exception_log"]).write_text(
+            json.dumps(exception_log, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        metadata = BacktestPipeline._run_metadata(
+            run_config=run_config,
+            paths=paths,
+            history_fetch_log=history_fetch_log,
+            exception_log=exception_log,
+        )
+        Path(paths["run_metadata"]).write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
         return paths
+
+    @staticmethod
+    def _run_metadata(
+        *,
+        run_config: Dict[str, object],
+        paths: Dict[str, str],
+        history_fetch_log: pd.DataFrame,
+        exception_log: List[Dict[str, object]],
+    ) -> Dict[str, object]:
+        cache_hits = int(history_fetch_log["cache_hit"].sum()) if "cache_hit" in history_fetch_log.columns else 0
+        provider_counts = (
+            history_fetch_log["provider"].value_counts().to_dict()
+            if "provider" in history_fetch_log.columns
+            else {}
+        )
+        return {
+            "schema_version": "1.0",
+            "as_of_date": run_config.get("as_of_date", ""),
+            "git_commit": run_config.get("git_commit", ""),
+            "run_config": run_config,
+            "stock_pool": {
+                "path": run_config.get("stock_pool_path", ""),
+                "sha256": run_config.get("stock_pool_sha256", ""),
+                "rows": run_config.get("stock_pool_rows", 0),
+                "columns": run_config.get("stock_pool_columns", ""),
+            },
+            "data_fetch": {
+                "total": int(len(history_fetch_log)),
+                "cache_hits": cache_hits,
+                "cache_misses": int(len(history_fetch_log) - cache_hits),
+                "provider_counts": provider_counts,
+            },
+            "exceptions": {
+                "count": len(exception_log),
+                "items": exception_log,
+            },
+            "outputs": paths,
+        }
 
     @staticmethod
     def _factor_lineage(as_of_date: str) -> pd.DataFrame:

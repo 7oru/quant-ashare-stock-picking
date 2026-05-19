@@ -76,7 +76,10 @@ results/
     ├── backtest_factor_lineage.md
     ├── factor_diagnostics.csv
     ├── factor_diagnostics.md
-    └── portfolio_risk.csv
+    ├── portfolio_risk.csv
+    ├── backtest_data_fetch_log.csv
+    ├── backtest_exceptions.json
+    └── backtest_run_metadata.json
 ```
 
 如果同一秒内多次运行，会自动追加 `_01`、`_02` 之类的后缀，避免覆盖已有结果。
@@ -222,6 +225,8 @@ python backtest_pipeline.py \
 回测过程中会为每个调仓日生成组合风险暴露表，覆盖行业、子行业、市值、AI 暴露、加权波动率分数、加权动量分数和高动量拥挤权重。后续组合约束和风险输出都基于这张表扩展。
 
 `portfolio_risk.csv` 会输出每个调仓日的组合暴露和单票近似风险贡献，可用于检查行业、主题、风格和风险预算是否符合预期。
+
+每次回测还会保存 `backtest_run_metadata.json`、`backtest_data_fetch_log.csv` 和 `backtest_exceptions.json`。其中 metadata 汇总运行参数、代码 commit、输入股票池 hash、输出文件路径、数据源分布和缓存命中统计；fetch log 逐股票记录 provider、cache hit 和缓存路径；exceptions 记录抓数等阶段异常。
 
 回测权重使用轻量约束优化生成：先按综合分数倾斜分配，再迭代应用单票、行业和子行业上限，并在剩余约束空间内按原始得分倾斜重新分配；无法在约束内配置的部分保留为现金。
 

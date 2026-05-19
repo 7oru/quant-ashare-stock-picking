@@ -39,7 +39,7 @@
 
 ## P2: Run Artifact Archiving
 
-- [ ] 每次运行保存参数、代码 commit、输入 CSV hash、数据缓存命中情况和异常日志。
+- [x] 每次运行保存参数、代码 commit、输入 CSV hash、数据缓存命中情况和异常日志。
 - [x] 将 training data 和主结果统一放在 `results/<timestamp>/`，将 ledger 和 reconciliation 放在 `audits/<timestamp>/`。
 - [x] 增加 `run_manifest.json`，记录所有输出文件路径和生成时间。
 - [x] 支持按 run id 快速复盘一次完整实验。
