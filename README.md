@@ -45,7 +45,7 @@ python scripts/run_full_pipeline.py \
   --csv ai_stock_pool.csv \
   --start 2026-03-01 \
   --end 2026-05-08 \
-  --lookback-days 60 \
+  --lookback-days 180 \
   --top-n 10
 ```
 
@@ -58,7 +58,7 @@ make real-run
 这个快捷入口等价于调用 `scripts/run_real_pipeline.sh`，默认设置 `NO_PROXY=*`、`no_proxy=*`，关闭 Yahoo fallback，并用 BaoStock/AkShare 拉取真实数据。可以通过环境变量覆盖参数，例如：
 
 ```bash
-END=2026-05-15 LOOKBACK_DAYS=90 TOP_N=12 make real-run
+END=2026-05-15 LOOKBACK_DAYS=180 TOP_N=12 make real-run
 ```
 
 ## 输出目录

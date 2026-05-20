@@ -144,7 +144,8 @@ class StockDataFetcher:
             ts_code = code.replace('.SZ', '').replace('.SH', '')
 
             try:
-                start_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y%m%d')
+                calendar_lookback_days = self._calendar_lookback_days(lookback_days)
+                start_date = (datetime.now() - timedelta(days=calendar_lookback_days)).strftime('%Y%m%d')
                 end_date = datetime.now().strftime('%Y%m%d')
                 df = self._get_hist_dataframe(
                     symbol=ts_code,
@@ -178,6 +179,11 @@ class StockDataFetcher:
                 raise RuntimeError("无法获取任何股票的价格数据")
 
         return price_data
+
+    @staticmethod
+    def _calendar_lookback_days(lookback_days: int) -> int:
+        requested_days = max(1, int(lookback_days))
+        return int(requested_days * 1.8) + 30
     
     
     def get_financial_data(self, stock_codes: List[str]) -> Dict[str, Dict]:
