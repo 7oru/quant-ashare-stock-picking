@@ -8,6 +8,8 @@ Stock Ranking Module
 import pandas as pd
 import logging
 import sys
+import json
+import os
 from typing import Tuple
 from datetime import datetime
 from pathlib import Path
@@ -94,6 +96,13 @@ class StockRanker:
             stock_codes = available_codes
             log(f"进入因子计算股票数量: {len(stock_codes)}")
         financial_data = self.data_fetcher.get_financial_data(stock_codes)
+        data_source_paths = self._write_data_source_report(
+            output_dir=output_dir,
+            as_of_date=run_as_of_date,
+            stock_codes=stock_codes,
+            price_data=price_data,
+            missing_codes=missing_codes,
+        )
         
         # 3. 计算因子得分
         log("计算因子得分...")
@@ -161,12 +170,90 @@ class StockRanker:
         ranking_output.insert(0, "as_of_date", run_as_of_date)
         ranking_output.to_csv(ranking_scores_path)
         log(f"保存排名得分到: {ranking_scores_path}")
+        log(f"保存数据源报告到: {data_source_paths['json']}")
         
         # 汇总信息
         top_stock = ranking.iloc[0]
         log(f"完成! Top 1: {top_stock['stock_name']} ({ranking.index[0]}) - 综合得分: {top_stock['composite_score']:.1f}")
         
         return ranking, allocation
+
+    def _write_data_source_report(
+        self,
+        *,
+        output_dir: Path,
+        as_of_date: str,
+        stock_codes: list,
+        price_data: dict,
+        missing_codes: list,
+    ) -> dict:
+        provider_counts = (
+            pd.Series(
+                [features.get("data_provider", "unknown") for features in price_data.values()],
+                dtype="object",
+            )
+            .value_counts()
+            .to_dict()
+        )
+        rows = [
+            {
+                "as_of_date": as_of_date,
+                "dataset": "historical_daily",
+                "source": provider,
+                "available": True,
+                "fallback_used": provider == "yahoo",
+                "rows": count,
+                "reason": "",
+            }
+            for provider, count in sorted(provider_counts.items())
+        ]
+        if missing_codes:
+            rows.append(
+                {
+                    "as_of_date": as_of_date,
+                    "dataset": "historical_daily",
+                    "source": "missing",
+                    "available": False,
+                    "fallback_used": False,
+                    "rows": len(missing_codes),
+                    "reason": ",".join(missing_codes),
+                }
+            )
+
+        spot_status = self.data_fetcher.spot_status_summary()
+        rows.append(
+            {
+                "as_of_date": as_of_date,
+                "dataset": "spot_fundamental",
+                "source": spot_status["source"],
+                "available": spot_status["available"],
+                "fallback_used": spot_status["fallback_used"],
+                "rows": spot_status["rows"],
+                "reason": spot_status["reason"],
+            }
+        )
+
+        csv_path = output_dir / "ranking_data_sources.csv"
+        json_path = output_dir / "ranking_data_sources.json"
+        pd.DataFrame(rows).to_csv(csv_path, index=False)
+        report = {
+            "schema_version": "1.0",
+            "as_of_date": as_of_date,
+            "historical_daily": {
+                "requested_stock_count": len(stock_codes) + len(missing_codes),
+                "fetched_stock_count": len(price_data),
+                "missing_stock_count": len(missing_codes),
+                "provider_counts": provider_counts,
+            },
+            "spot_fundamental": spot_status,
+            "environment": {
+                "quant_bypass_system_proxy": os.environ.get("QUANT_BYPASS_SYSTEM_PROXY", "1"),
+                "quant_enable_yahoo_fallback": os.environ.get("QUANT_ENABLE_YAHOO_FALLBACK", "1"),
+                "quant_spot_timeout_seconds": os.environ.get("QUANT_SPOT_TIMEOUT_SECONDS", ""),
+            },
+        }
+        json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return {"csv": str(csv_path), "json": str(json_path)}
     
     def generate_report(self, 
                        ranking: pd.DataFrame,

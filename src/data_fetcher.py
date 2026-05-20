@@ -62,6 +62,16 @@ class StockDataFetcher:
         self.cache = {}
         self.data_cache = TmpDataCache()
         self.spot_disabled_reason = None
+        self.spot_status = {
+            "source": "not_requested",
+            "available": False,
+            "fallback_used": False,
+            "reason": "",
+            "rows": 0,
+            "cache_path": "",
+            "matched_stock_count": 0,
+            "missing_stock_count": 0,
+        }
         
     def get_price_data(self, stock_codes: List[str],
                        lookback_days: int = 240) -> Dict[str, Dict]:
@@ -111,6 +121,7 @@ class StockDataFetcher:
             
             return spot_data
         except Exception as e:
+            self._record_spot_fallback(str(e) or repr(e))
             log(f"获取实时行情数据失败: {e}")
             return {}
     
@@ -195,6 +206,7 @@ class StockDataFetcher:
             import akshare as ak
 
             if self.spot_disabled_reason:
+                self._record_spot_fallback(self.spot_disabled_reason)
                 log(f"跳过实时行情数据: {self.spot_disabled_reason}")
                 return {}
 
@@ -204,6 +216,7 @@ class StockDataFetcher:
             except Exception as e:
                 message = str(e) or repr(e)
                 self.spot_disabled_reason = message
+                self._record_spot_fallback(message)
                 log(f"警告: 获取实时行情数据失败，将使用价格数据代理因子继续运行: {message}")
                 return {}
             spot_df = spot_df.set_index('代码')
@@ -402,6 +415,8 @@ class StockDataFetcher:
                 if len(failed_stocks) == len(stock_codes):
                     raise RuntimeError(f"无法获取任何股票的财务数据")
 
+            self.spot_status["matched_stock_count"] = len(financial_data)
+            self.spot_status["missing_stock_count"] = len(failed_stocks)
             log(f"财务数据获取完成: {len(financial_data)}/{total} 只股票")
             return financial_data
 
@@ -418,6 +433,7 @@ class StockDataFetcher:
         cache_path = self.data_cache.path_for("spot", key)
         if cached is not None:
             log(f"使用缓存实时行情数据: {cache_path}")
+            self._record_spot_success("akshare_cache", cached, cache_path)
             return cached.copy()
 
         spot_timeout = int(os.environ.get("QUANT_SPOT_TIMEOUT_SECONDS", "120"))
@@ -425,6 +441,7 @@ class StockDataFetcher:
             with maybe_bypass_system_proxy():
                 spot_df = ak.stock_zh_a_spot_em()
             self.data_cache.set_dataframe("spot", key, spot_df)
+            self._record_spot_success("akshare_live", spot_df, cache_path)
             return spot_df.copy()
 
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -457,6 +474,7 @@ class StockDataFetcher:
                     if status == "ok":
                         spot_df = pd.read_pickle(payload)
                         self.data_cache.set_dataframe("spot", key, spot_df)
+                        self._record_spot_success("akshare_live", spot_df, cache_path)
                         return spot_df.copy()
                     raise RuntimeError(payload)
 
@@ -495,3 +513,28 @@ class StockDataFetcher:
         elif provider == "yahoo":
             log(f"  BaoStock失败，使用Yahoo备用源: {symbol} ({primary_error})")
         return hist_df.copy()
+
+    def spot_status_summary(self) -> Dict[str, object]:
+        return dict(self.spot_status)
+
+    def _record_spot_success(self, source: str, spot_df: pd.DataFrame, cache_path) -> None:
+        self.spot_status.update(
+            {
+                "source": source,
+                "available": True,
+                "fallback_used": False,
+                "reason": "",
+                "rows": int(len(spot_df)),
+                "cache_path": str(cache_path),
+            }
+        )
+
+    def _record_spot_fallback(self, reason: str) -> None:
+        self.spot_status.update(
+            {
+                "source": "price_proxy",
+                "available": False,
+                "fallback_used": True,
+                "reason": reason,
+            }
+        )
