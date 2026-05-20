@@ -1,0 +1,71 @@
+{
+  "schema_version": "1.0",
+  "as_of_date": "2026-05-08",
+  "git_commit": "2d731d6ef6fa0b99ea63aa4193eaa232f4bd5b79",
+  "run_config": {
+    "csv_path": "ai_stock_pool.csv",
+    "start_date": "2026-03-01",
+    "end_date": "2026-05-08",
+    "initial_capital": 1000000.0,
+    "rebalance": "monthly",
+    "lookback_days": 60,
+    "top_n": 10,
+    "commission_bps": 10.0,
+    "stamp_tax_bps": 5.0,
+    "transfer_fee_bps": 0.1,
+    "slippage_bps": 5.0,
+    "impact_bps": 0.0,
+    "max_participation_rate": 0.1,
+    "max_drawdown_budget": 0.2,
+    "min_listing_days": 60,
+    "as_of_date": "2026-05-08",
+    "git_commit": "2d731d6ef6fa0b99ea63aa4193eaa232f4bd5b79",
+    "point_in_time_stock_pool_policy": "filter stock_pool snapshot by list_date <= signal_date, candidate_visible_dates <= signal_date, and row-level pool_entry_date/stock_pool_as_of_date/as_of_date <= signal_date when present",
+    "point_in_time_llm_candidate_policy": "filter LLM candidates by candidate_visible_dates <= signal_date",
+    "point_in_time_industry_data_policy": "mask sector/sub_sector/ai_exposure when industry_as_of_date/classification_as_of_date/sector_as_of_date is after the signal date",
+    "point_in_time_financial_data_policy": "price-only point-in-time proxy in backtest; revised/current fundamental fields are null at each signal date",
+    "historical_price_provider_policy": "try BaoStock daily history first, then Yahoo chart fallback when enabled",
+    "trading_constraint_policy": "exclude suspended, ST, newly listed, and limit-locked names from rebalance buys",
+    "transaction_cost_policy": "rebalance at next trading day to model T+1 signal execution; charge commission/transfer/slippage/impact on buys and sells, plus stamp tax on sells",
+    "capacity_policy": "cap each buy and sell by trade-start daily amount times max_participation_rate divided by equity",
+    "risk_budget_policy": "constrain single stock, sector, sub-sector, AI exposure, and approximate single-name risk contribution; halve desired gross exposure when current drawdown breaches max_drawdown_budget",
+    "candidate_visible_dates": "{}",
+    "stock_pool_path": "ai_stock_pool.csv",
+    "stock_pool_sha256": "a77947290af5a178019a5f597f0384f44b184e7c8663e0111fb0f5511ca3a09e",
+    "stock_pool_rows": 56,
+    "stock_pool_columns": "stock_code|stock_name|sector|sub_sector|exchange|list_date|market_cap|ai_exposure|recommended_logic"
+  },
+  "stock_pool": {
+    "path": "ai_stock_pool.csv",
+    "sha256": "a77947290af5a178019a5f597f0384f44b184e7c8663e0111fb0f5511ca3a09e",
+    "rows": 56,
+    "columns": "stock_code|stock_name|sector|sub_sector|exchange|list_date|market_cap|ai_exposure|recommended_logic"
+  },
+  "data_fetch": {
+    "total": 56,
+    "cache_hits": 56,
+    "cache_misses": 0,
+    "provider_counts": {
+      "baostock": 56
+    }
+  },
+  "exceptions": {
+    "count": 0,
+    "items": []
+  },
+  "outputs": {
+    "config": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_config.csv",
+    "summary": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_summary.csv",
+    "equity": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_equity.csv",
+    "rebalances": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_rebalances.csv",
+    "point_in_time": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_point_in_time.csv",
+    "factor_lineage": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_factor_lineage.csv",
+    "factor_lineage_notes": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_factor_lineage.md",
+    "factor_diagnostics": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/factor_diagnostics.csv",
+    "factor_diagnostics_summary": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/factor_diagnostics.md",
+    "portfolio_risk": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/portfolio_risk.csv",
+    "history_fetch_log": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_data_fetch_log.csv",
+    "exception_log": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_exceptions.json",
+    "run_metadata": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_run_metadata.json"
+  }
+}
