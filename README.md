@@ -49,6 +49,18 @@ python scripts/run_full_pipeline.py \
   --top-n 10
 ```
 
+运行推荐的真实数据闭环：
+
+```bash
+make real-run
+```
+
+这个快捷入口等价于调用 `scripts/run_real_pipeline.sh`，默认设置 `NO_PROXY=*`、`no_proxy=*`，关闭 Yahoo fallback，并用 BaoStock/AkShare 拉取真实数据。可以通过环境变量覆盖参数，例如：
+
+```bash
+END=2026-05-15 LOOKBACK_DAYS=90 TOP_N=12 make real-run
+```
+
 ## 输出目录
 
 默认每次运行都会创建一个时间戳目录：
@@ -144,6 +156,14 @@ results/<run_id>/run_manifest.json
 audits/<run_id>/llm_research/                       # LLM 研究证据账本
 audits/<run_id>/pipeline_reconcilliation/           # 对账检查、raw ranking/backtest 和文件 manifest
 ```
+
+真实 run 完成后，可以把关键摘要归档到一个稳定、可提交的位置：
+
+```bash
+make archive-baseline RUN_ID=20260519_215413 NAME=latest_real_run
+```
+
+归档结果写到 `docs/baselines/<name>/`，包含 run manifest、回测摘要、对账检查、主结果和 top 10 摘要。完整 `results/` 和 `audits/` 仍然保持本地 ignored。
 
 ## 选股入口
 
