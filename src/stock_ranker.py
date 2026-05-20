@@ -159,6 +159,8 @@ class StockRanker:
         allocation = self.portfolio_optimizer.optimize_allocation(
             ranking, stock_info, total_capital
         )
+        ranking.attrs["as_of_date"] = run_as_of_date
+        allocation.attrs["as_of_date"] = run_as_of_date
         
         # 8. 输出结果
         log(f"保存结果到: {output_path}")

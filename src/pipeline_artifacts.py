@@ -44,15 +44,17 @@ def write_training_data(
     output_path.mkdir(parents=True, exist_ok=False)
 
     stock_pool = pd.read_csv(csv_path, encoding="utf-8-sig")
-    as_of_date = _backtest_as_of_date(backtest_result)
+    backtest_as_of_date = _backtest_as_of_date(backtest_result)
+    ranking_as_of_date = _frame_as_of_date(ranking, backtest_as_of_date)
+    allocation_as_of_date = _frame_as_of_date(allocation, ranking_as_of_date)
     ranking_features = ranking.reset_index().rename(columns={"index": "stock_code"})
     allocation_labels = allocation.reset_index().rename(columns={"index": "stock_code"})
     rebalances = backtest_result["rebalances"].copy()
     equity_curve = backtest_result["equity_curve"].reset_index()
 
-    stock_pool = _ensure_as_of_date(stock_pool, as_of_date)
-    ranking_features = _ensure_as_of_date(ranking_features, as_of_date)
-    allocation_labels = _ensure_as_of_date(allocation_labels, as_of_date)
+    stock_pool = _ensure_as_of_date(stock_pool, ranking_as_of_date)
+    ranking_features = _ensure_as_of_date(ranking_features, ranking_as_of_date)
+    allocation_labels = _ensure_as_of_date(allocation_labels, allocation_as_of_date)
     rebalances = _ensure_as_of_date(rebalances, "signal_date")
     equity_curve = _ensure_as_of_date(equity_curve, "date")
 
@@ -73,7 +75,9 @@ def write_training_data(
         "schema_version": "1.0",
         "run_id": run_id,
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "as_of_date": as_of_date,
+        "as_of_date": ranking_as_of_date,
+        "ranking_as_of_date": ranking_as_of_date,
+        "backtest_as_of_date": backtest_as_of_date,
         "git_commit": current_git_commit(Path(__file__).resolve().parents[1]),
         "stock_pool": describe_stock_pool(csv_path),
         "rows": {
@@ -116,7 +120,12 @@ def write_merged_scores(
     allocation_frame = allocation[["target_weight", "position_value", "recommendation"]].reset_index()
     allocation_frame = allocation_frame.rename(columns={"index": "stock_code"})
     merged = ranking_frame.merge(allocation_frame, on="stock_code", how="left")
-    merged = _ensure_as_of_date(merged, _backtest_as_of_date(backtest_result))
+    backtest_as_of_date = _backtest_as_of_date(backtest_result)
+    ranking_as_of_date = _frame_as_of_date(ranking, backtest_as_of_date)
+    merged = _ensure_as_of_date(merged, ranking_as_of_date)
+    if "backtest_as_of_date" not in merged.columns:
+        insert_at = 1 if "as_of_date" in merged.columns else 0
+        merged.insert(insert_at, "backtest_as_of_date", backtest_as_of_date)
 
     rebalances = backtest_result["rebalances"]
     if not rebalances.empty and "stock_code" in rebalances.columns:
@@ -266,11 +275,15 @@ def write_run_manifest(
     Write a top-level manifest tying all folders together.
     """
     target = Path(output_path)
+    ranking_as_of_date = _primary_result_as_of_date(primary_result_paths) or _manifest_as_of_date(backtest_paths)
+    backtest_as_of_date = _manifest_as_of_date(backtest_paths)
     manifest = {
         "schema_version": "1.0",
         "run_id": run_id,
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "as_of_date": _manifest_as_of_date(backtest_paths),
+        "as_of_date": ranking_as_of_date,
+        "ranking_as_of_date": ranking_as_of_date,
+        "backtest_as_of_date": backtest_as_of_date,
         "git_commit": current_git_commit(Path(__file__).resolve().parents[1]),
         "stock_pool": describe_stock_pool(csv_path),
         "primary_results": primary_result_paths,
@@ -339,6 +352,17 @@ def _ensure_as_of_date(frame: pd.DataFrame, source: str) -> pd.DataFrame:
     return output
 
 
+def _frame_as_of_date(frame: pd.DataFrame, fallback: str) -> str:
+    attr_value = frame.attrs.get("as_of_date") if hasattr(frame, "attrs") else None
+    if attr_value:
+        return str(attr_value)
+    if "as_of_date" in frame.columns:
+        values = frame["as_of_date"].dropna()
+        if not values.empty:
+            return str(values.iloc[0])
+    return fallback
+
+
 def _backtest_as_of_date(backtest_result: Dict[str, object]) -> str:
     equity_curve = backtest_result.get("equity_curve")
     if isinstance(equity_curve, pd.DataFrame) and not equity_curve.empty:
@@ -359,3 +383,17 @@ def _manifest_as_of_date(backtest_paths: Dict[str, str]) -> str:
         except Exception:
             pass
     return datetime.now().date().isoformat()
+
+
+def _primary_result_as_of_date(primary_result_paths: Dict[str, str]) -> Optional[str]:
+    primary_path = Path(primary_result_paths.get("merged_scores", ""))
+    if primary_path.exists():
+        try:
+            primary = pd.read_csv(primary_path, nrows=1)
+            if "as_of_date" in primary.columns and not primary.empty:
+                values = primary["as_of_date"].dropna()
+                if not values.empty:
+                    return str(values.iloc[0])
+        except Exception:
+            pass
+    return None
