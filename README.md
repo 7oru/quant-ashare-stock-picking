@@ -215,8 +215,8 @@ python backtest_pipeline.py \
 | `--end` | 必填 | 回测结束日期 |
 | `--capital` | `1000000.0` | 初始资金 |
 | `--rebalance` | `monthly` | 调仓频率：`weekly`、`monthly`、`quarterly` |
-| `--lookback-days` | `180` | 每个调仓日用于计算信号的历史窗口 |
-| `--top-n` | `10` | 每次选择的股票数量 |
+| `--lookback-days` | `180` | 每个调仓日用于计算信号的历史窗口，至少 60 |
+| `--top-n` | `10` | 每次选择的股票数量；默认风险贡献上限下至少 5 |
 | `--fee-bps` | `10.0` | 佣金成本，单位 bps；为兼容旧参数名保留 |
 | `--stamp-tax-bps` | `5.0` | 卖出印花税，单位 bps |
 | `--transfer-fee-bps` | `0.1` | 买卖双边过户费，单位 bps |

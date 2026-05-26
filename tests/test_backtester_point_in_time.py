@@ -239,6 +239,20 @@ class BacktesterPointInTimeTests(unittest.TestCase):
 
         self.assertAlmostEqual(avg_turnover, 0.9)
 
+    def test_run_parameter_validation_rejects_too_short_lookback(self):
+        pipeline = BacktestPipeline()
+
+        with self.assertRaisesRegex(ValueError, "--lookback-days must be at least 60"):
+            pipeline.validate_run_parameters(lookback_days=5, top_n=10)
+
+    def test_run_parameter_validation_rejects_infeasible_top_n(self):
+        pipeline = BacktestPipeline()
+
+        with self.assertRaisesRegex(ValueError, "--top-n=3 is infeasible"):
+            pipeline.validate_run_parameters(lookback_days=60, top_n=3)
+
+        pipeline.validate_run_parameters(lookback_days=60, top_n=5)
+
     def test_factor_diagnostics_reports_sector_market_cap_neutralized_ic(self):
         factor_signals = pd.DataFrame(
             [

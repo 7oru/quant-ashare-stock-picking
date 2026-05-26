@@ -53,25 +53,28 @@ def main():
             candidate_visible_dates = json.load(handle)
 
     pipeline = BacktestPipeline()
-    result = pipeline.run(
-        csv_path=args.csv,
-        start_date=args.start,
-        end_date=args.end,
-        initial_capital=args.capital,
-        rebalance=args.rebalance,
-        lookback_days=args.lookback_days,
-        top_n=args.top_n,
-        fee_bps=args.fee_bps,
-        stamp_tax_bps=args.stamp_tax_bps,
-        transfer_fee_bps=args.transfer_fee_bps,
-        slippage_bps=args.slippage_bps,
-        impact_bps=args.impact_bps,
-        max_participation_rate=args.max_participation_rate,
-        max_drawdown_budget=args.max_drawdown_budget,
-        output_dir=args.output_dir,
-        candidate_visible_dates=candidate_visible_dates,
-        min_listing_days=args.min_listing_days,
-    )
+    try:
+        result = pipeline.run(
+            csv_path=args.csv,
+            start_date=args.start,
+            end_date=args.end,
+            initial_capital=args.capital,
+            rebalance=args.rebalance,
+            lookback_days=args.lookback_days,
+            top_n=args.top_n,
+            fee_bps=args.fee_bps,
+            stamp_tax_bps=args.stamp_tax_bps,
+            transfer_fee_bps=args.transfer_fee_bps,
+            slippage_bps=args.slippage_bps,
+            impact_bps=args.impact_bps,
+            max_participation_rate=args.max_participation_rate,
+            max_drawdown_budget=args.max_drawdown_budget,
+            output_dir=args.output_dir,
+            candidate_visible_dates=candidate_visible_dates,
+            min_listing_days=args.min_listing_days,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
 
     print("\n回测完成")
     print(result["summary"].to_string(index=False, float_format=lambda value: f"{value:.4f}"))

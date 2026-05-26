@@ -6,6 +6,7 @@ Backtest pipeline for the multi-factor stock picker
 from __future__ import annotations
 
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -34,6 +35,7 @@ class BacktestPipeline:
     POOL_ENTRY_DATE_COLUMNS = ("pool_entry_date", "stock_pool_as_of_date", "as_of_date")
     INDUSTRY_AS_OF_DATE_COLUMNS = ("industry_as_of_date", "classification_as_of_date", "sector_as_of_date")
     DEFAULT_MIN_LISTING_DAYS = 60
+    MIN_LOOKBACK_DAYS = 60
 
     def __init__(self):
         self.factor_calculator = FactorCalculator()
@@ -66,6 +68,7 @@ class BacktestPipeline:
         """
         运行回测并保存结果。
         """
+        self.validate_run_parameters(lookback_days=lookback_days, top_n=top_n)
         stock_info = pd.read_csv(csv_path, index_col="stock_code", encoding="utf-8-sig")
         stock_pool_metadata = describe_stock_pool(csv_path, stock_info)
         stock_codes = stock_info.index.tolist()
@@ -456,6 +459,27 @@ class BacktestPipeline:
         self._last_history_fetch_events = fetch_events
         self._last_exception_log = exception_log
         return histories
+
+    def validate_run_parameters(self, *, lookback_days: int, top_n: int) -> None:
+        if lookback_days < self.MIN_LOOKBACK_DAYS:
+            raise ValueError(
+                f"--lookback-days must be at least {self.MIN_LOOKBACK_DAYS}; "
+                "the backtest fetch layer requires at least 60 daily bars per stock."
+            )
+        if top_n < 1:
+            raise ValueError("--top-n must be at least 1.")
+
+        risk_cap = float(self.position_limits.get("max_single_risk_contribution", 1.0))
+        if risk_cap <= 0:
+            raise ValueError("max_single_risk_contribution must be positive.")
+        if risk_cap < 1:
+            min_top_n = math.ceil(1.0 / risk_cap)
+            if top_n < min_top_n:
+                raise ValueError(
+                    f"--top-n={top_n} is infeasible with "
+                    f"max_single_risk_contribution={risk_cap:.2f}; "
+                    f"use --top-n >= {min_top_n} or relax the risk cap."
+                )
 
     def _get_hist_dataframe(
         self,

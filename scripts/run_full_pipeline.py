@@ -74,6 +74,12 @@ def main() -> None:
     parser.add_argument("--spot-timeout-seconds", type=int, default=30, help="Ranking spot-data timeout")
     args = parser.parse_args()
 
+    backtester = BacktestPipeline()
+    try:
+        backtester.validate_run_parameters(lookback_days=args.lookback_days, top_n=args.top_n)
+    except ValueError as exc:
+        parser.error(str(exc))
+
     os.environ["QUANT_SPOT_TIMEOUT_SECONDS"] = str(args.spot_timeout_seconds)
 
     roots = ["results", "audits"]
@@ -118,19 +124,22 @@ def main() -> None:
     report = ranker.generate_report(ranking, allocation, stock_info.loc[ranking.index.intersection(stock_info.index)])
     (raw_output_dir / "analysis_report.txt").write_text(report, encoding="utf-8")
 
-    backtest_result = BacktestPipeline().run(
-        csv_path=args.csv,
-        start_date=args.start,
-        end_date=args.end,
-        initial_capital=args.backtest_capital,
-        rebalance=args.rebalance,
-        lookback_days=args.lookback_days,
-        top_n=args.top_n,
-        fee_bps=args.fee_bps,
-        output_dir=str(raw_output_dir),
-        output_timestamp="backtest",
-        candidate_visible_dates=candidate_visible_dates,
-    )
+    try:
+        backtest_result = backtester.run(
+            csv_path=args.csv,
+            start_date=args.start,
+            end_date=args.end,
+            initial_capital=args.backtest_capital,
+            rebalance=args.rebalance,
+            lookback_days=args.lookback_days,
+            top_n=args.top_n,
+            fee_bps=args.fee_bps,
+            output_dir=str(raw_output_dir),
+            output_timestamp="backtest",
+            candidate_visible_dates=candidate_visible_dates,
+        )
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from exc
 
     primary_result_paths = write_merged_scores(
         output_dir=results_root,
