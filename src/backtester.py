@@ -1434,8 +1434,19 @@ class BacktestPipeline:
 
     @staticmethod
     def _turnover(previous: pd.Series, current: pd.Series) -> float:
+        previous = BacktestPipeline._coalesced_weight_series(previous)
+        current = BacktestPipeline._coalesced_weight_series(current)
         all_index = previous.index.union(current.index)
         return float((current.reindex(all_index).fillna(0) - previous.reindex(all_index).fillna(0)).abs().sum())
+
+    @staticmethod
+    def _coalesced_weight_series(weights: pd.Series) -> pd.Series:
+        if weights.empty:
+            return pd.Series(dtype="float64")
+        coalesced = pd.to_numeric(weights, errors="coerce").fillna(0.0).astype(float)
+        if coalesced.index.has_duplicates:
+            coalesced = coalesced.groupby(level=0).sum()
+        return coalesced
 
     @staticmethod
     def _transaction_cost(
@@ -1448,6 +1459,8 @@ class BacktestPipeline:
         slippage_bps: float,
         impact_bps: float,
     ) -> Dict[str, float]:
+        previous = BacktestPipeline._coalesced_weight_series(previous)
+        current = BacktestPipeline._coalesced_weight_series(current)
         all_index = previous.index.union(current.index)
         delta = current.reindex(all_index).fillna(0) - previous.reindex(all_index).fillna(0)
         buy_turnover = float(delta.clip(lower=0).sum())

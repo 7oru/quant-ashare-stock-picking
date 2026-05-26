@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "as_of_date": "2026-05-26",
+  "historical_daily": {
+    "requested_stock_count": 56,
+    "fetched_stock_count": 56,
+    "missing_stock_count": 0,
+    "provider_counts": {
+      "baostock": 56
+    }
+  },
+  "spot_fundamental": {
+    "source": "price_proxy",
+    "available": false,
+    "fallback_used": true,
+    "reason": "ConnectionError(ProtocolError('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')))",
+    "rows": 0,
+    "cache_path": "",
+    "matched_stock_count": 0,
+    "missing_stock_count": 0
+  },
+  "environment": {
+    "quant_bypass_system_proxy": "1",
+    "quant_enable_yahoo_fallback": "0",
+    "quant_spot_timeout_seconds": "30"
+  }
+}

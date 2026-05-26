@@ -3,6 +3,6 @@ as_of_date,check,value,status
 2026-05-08,ranking_rows,56,pass
 2026-05-08,allocation_rows,56,pass
 2026-05-08,backtest_equity_rows,24,pass
-2026-05-08,backtest_rebalance_rows,22,pass
+2026-05-08,backtest_rebalance_rows,24,pass
 2026-05-08,training_files,6,pass
 2026-05-08,research_ledger_files,5,pass

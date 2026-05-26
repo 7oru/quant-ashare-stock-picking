@@ -1,10 +1,10 @@
 {
   "schema_version": "1.0",
   "baseline_name": "latest_real_run",
-  "run_id": "20260519_215413",
-  "archived_at": "2026-05-20T15:27:06",
-  "source_git_commit": "2d731d6ef6fa0b99ea63aa4193eaa232f4bd5b79",
-  "as_of_date": "2026-05-08",
+  "run_id": "20260526_102948",
+  "archived_at": "2026-05-26T10:30:05",
+  "source_git_commit": "e99044309f0e8f1970b0c2efd7bfac63d112a828",
+  "as_of_date": "2026-05-26",
   "stock_pool": {
     "stock_pool_path": "ai_stock_pool.csv",
     "stock_pool_sha256": "a77947290af5a178019a5f597f0384f44b184e7c8663e0111fb0f5511ca3a09e",
@@ -15,27 +15,27 @@
   "strategy": {
     "as_of_date": "2026-05-08",
     "name": "strategy",
-    "total_return": 0.1697039566506974,
-    "annual_return": 4.18558275079424,
-    "annual_volatility": 0.2601458173126448,
-    "sharpe": 6.596930778029643,
-    "max_drawdown": -0.030198998618905,
-    "win_rate": 0.625,
-    "final_equity": 1169703.9566506974,
+    "total_return": 0.1276233639692245,
+    "annual_return": 2.5295772386765596,
+    "annual_volatility": 0.342571072284197,
+    "sharpe": 3.9628087339092897,
+    "max_drawdown": -0.0511688823252417,
+    "win_rate": 0.5416666666666666,
+    "final_equity": 1127623.3639692245,
     "trading_days": 24,
     "rebalance_count": 2,
-    "avg_turnover": 0.9280555379808968
+    "avg_turnover": 1.070327744324296
   },
   "universe_equal_weight": {
     "as_of_date": "2026-05-08",
     "name": "universe_equal_weight",
-    "total_return": 0.215365004683276,
-    "annual_return": 6.752122633570014,
+    "total_return": 0.2153650046832762,
+    "annual_return": 6.752122633570029,
     "annual_volatility": 0.3308476236402922,
     "sharpe": 6.371108787848299,
     "max_drawdown": -0.0345089255545157,
     "win_rate": 0.6666666666666666,
-    "final_equity": 1215365.004683276,
+    "final_equity": 1215365.0046832762,
     "trading_days": 24,
     "rebalance_count": 2,
     "avg_turnover": null
@@ -43,41 +43,52 @@
   "artifacts": {
     "run_manifest": {
       "path": "docs/baselines/latest_real_run/run_manifest.json",
-      "sha256": "de48cb2872065869b630e136637096b057885a227ae2e4a85d4e993177941a6c",
-      "bytes": 3951
+      "sha256": "890357fedd80f4228189cbcaadf58c16e85ff1b486c05e05378a36b154d1af42",
+      "bytes": 4028
     },
     "primary_scores": {
       "path": "docs/baselines/latest_real_run/ranking_backtest_scores.csv",
-      "sha256": "d6bf228b05f6875de4141c59965d3f85eb87adba49c481b75bc74027dc1c4917",
-      "bytes": 15964,
+      "sha256": "60d16aab7eb27cdd27789a9b3c79c43988f632a28f1cd4e8e5f518fb24d5493f",
+      "bytes": 19046,
       "rows": 56
     },
     "reconciliation_summary": {
       "path": "docs/baselines/latest_real_run/summary.json",
-      "sha256": "218e12dca81bdbc3d9a70bc81cc870904c029f0af4ce7571c24706f1ee1df657",
+      "sha256": "1c83b8e716240f679823e75059b3c2bbfd37a2f0e0653b9fe2ccc5ecdc98b329",
       "bytes": 554
     },
     "run_checks": {
       "path": "docs/baselines/latest_real_run/run_checks.csv",
-      "sha256": "fca85d5fb76f76014fd406ce9b365b2f0785b706d5a9a266200d24f7973d9ca0",
+      "sha256": "63e223865a0b38adddca661fb96cd86e3f63184ff646c110b78c1b4700e8db41",
       "bytes": 288,
       "rows": 7
     },
     "backtest_summary": {
       "path": "docs/baselines/latest_real_run/backtest_summary.csv",
-      "sha256": "e9d013790950a43e87ae17a340cb2e03ffb02a281b6c29b7277dee38f320d97a",
-      "bytes": 483,
+      "sha256": "237b4d1b208a2d930c7c1e2933165e29019d3113d6c23bbe41b6796440a8a412",
+      "bytes": 497,
       "rows": 2
     },
     "backtest_run_metadata": {
       "path": "docs/baselines/latest_real_run/backtest_run_metadata.json",
-      "sha256": "807757e7dc0ff8c98c7e9bdce31aed923701c65f4d9087808ae533429b026d8a",
-      "bytes": 4419
+      "sha256": "ce75664cd1af79933a6780f47fbce0b47d0fb5e35da1da2e19f78e15ba614226",
+      "bytes": 4420
+    },
+    "ranking_data_sources_json": {
+      "path": "docs/baselines/latest_real_run/ranking_data_sources.json",
+      "sha256": "1afb81f5d0b580e215bba8295f97e62e71628854493bdf09ca272f55d9cbe75b",
+      "bytes": 721
+    },
+    "ranking_data_sources_csv": {
+      "path": "docs/baselines/latest_real_run/ranking_data_sources.csv",
+      "sha256": "daf5e98ee8f0789538100fbe17108487f32972c4694ff709046193f4f67de1ad",
+      "bytes": 292,
+      "rows": 2
     },
     "top_10_primary_scores": {
       "path": "docs/baselines/latest_real_run/top_10_ranking_backtest_scores.csv",
-      "sha256": "de96d85c3a2a147beac2d6837986c5ab3fef9bc5d4bdd0b04db03a798e4ff3f4",
-      "bytes": 3901,
+      "sha256": "f8f94058333784f4686aa78f11e1283554501c109a889d22ebcd96ea4eb0759c",
+      "bytes": 4425,
       "rows": 10
     }
   }

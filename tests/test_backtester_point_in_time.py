@@ -217,6 +217,28 @@ class BacktesterPointInTimeTests(unittest.TestCase):
         self.assertIn("sector=compute", summary)
         self.assertIn("Factor Diagnostics", summary)
 
+    def test_factor_diagnostics_coalesces_duplicate_rebalance_rows(self):
+        factor_signals = pd.DataFrame(
+            [
+                {"signal_date": "2024-03-31", "selected": True, "forward_return": 0.01},
+                {"signal_date": "2024-04-30", "selected": True, "forward_return": 0.02},
+            ]
+        )
+        rebalances = pd.DataFrame(
+            [
+                {"signal_date": "2024-03-31", "stock_code": "A", "target_weight": 0.6},
+                {"signal_date": "2024-03-31", "stock_code": "B", "target_weight": 0.4},
+                {"signal_date": "2024-04-30", "stock_code": "A", "target_weight": 0.0},
+                {"signal_date": "2024-04-30", "stock_code": "A", "target_weight": 0.6},
+                {"signal_date": "2024-04-30", "stock_code": "C", "target_weight": 0.4},
+            ]
+        )
+
+        rows = BacktestPipeline._portfolio_diagnostic_rows(factor_signals, rebalances)
+        avg_turnover = next(row["value"] for row in rows if row["metric"] == "avg_turnover")
+
+        self.assertAlmostEqual(avg_turnover, 0.9)
+
     def test_factor_diagnostics_reports_sector_market_cap_neutralized_ic(self):
         factor_signals = pd.DataFrame(
             [

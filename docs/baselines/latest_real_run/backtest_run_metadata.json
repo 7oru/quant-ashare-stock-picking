@@ -1,14 +1,14 @@
 {
   "schema_version": "1.0",
   "as_of_date": "2026-05-08",
-  "git_commit": "2d731d6ef6fa0b99ea63aa4193eaa232f4bd5b79",
+  "git_commit": "e99044309f0e8f1970b0c2efd7bfac63d112a828",
   "run_config": {
     "csv_path": "ai_stock_pool.csv",
     "start_date": "2026-03-01",
     "end_date": "2026-05-08",
     "initial_capital": 1000000.0,
     "rebalance": "monthly",
-    "lookback_days": 60,
+    "lookback_days": 180,
     "top_n": 10,
     "commission_bps": 10.0,
     "stamp_tax_bps": 5.0,
@@ -19,7 +19,7 @@
     "max_drawdown_budget": 0.2,
     "min_listing_days": 60,
     "as_of_date": "2026-05-08",
-    "git_commit": "2d731d6ef6fa0b99ea63aa4193eaa232f4bd5b79",
+    "git_commit": "e99044309f0e8f1970b0c2efd7bfac63d112a828",
     "point_in_time_stock_pool_policy": "filter stock_pool snapshot by list_date <= signal_date, candidate_visible_dates <= signal_date, and row-level pool_entry_date/stock_pool_as_of_date/as_of_date <= signal_date when present",
     "point_in_time_llm_candidate_policy": "filter LLM candidates by candidate_visible_dates <= signal_date",
     "point_in_time_industry_data_policy": "mask sector/sub_sector/ai_exposure when industry_as_of_date/classification_as_of_date/sector_as_of_date is after the signal date",
@@ -54,18 +54,18 @@
     "items": []
   },
   "outputs": {
-    "config": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_config.csv",
-    "summary": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_summary.csv",
-    "equity": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_equity.csv",
-    "rebalances": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_rebalances.csv",
-    "point_in_time": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_point_in_time.csv",
-    "factor_lineage": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_factor_lineage.csv",
-    "factor_lineage_notes": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_factor_lineage.md",
-    "factor_diagnostics": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/factor_diagnostics.csv",
-    "factor_diagnostics_summary": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/factor_diagnostics.md",
-    "portfolio_risk": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/portfolio_risk.csv",
-    "history_fetch_log": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_data_fetch_log.csv",
-    "exception_log": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_exceptions.json",
-    "run_metadata": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_run_metadata.json"
+    "config": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_config.csv",
+    "summary": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_summary.csv",
+    "equity": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_equity.csv",
+    "rebalances": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_rebalances.csv",
+    "point_in_time": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_point_in_time.csv",
+    "factor_lineage": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_factor_lineage.csv",
+    "factor_lineage_notes": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_factor_lineage.md",
+    "factor_diagnostics": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/factor_diagnostics.csv",
+    "factor_diagnostics_summary": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/factor_diagnostics.md",
+    "portfolio_risk": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/portfolio_risk.csv",
+    "history_fetch_log": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_data_fetch_log.csv",
+    "exception_log": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_exceptions.json",
+    "run_metadata": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_run_metadata.json"
   }
 }

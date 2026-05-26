@@ -1,9 +1,11 @@
 {
   "schema_version": "1.0",
-  "run_id": "20260519_215413",
-  "created_at": "2026-05-19T21:54:47",
-  "as_of_date": "2026-05-08",
-  "git_commit": "2d731d6ef6fa0b99ea63aa4193eaa232f4bd5b79",
+  "run_id": "20260526_102948",
+  "created_at": "2026-05-26T10:29:57",
+  "as_of_date": "2026-05-26",
+  "ranking_as_of_date": "2026-05-26",
+  "backtest_as_of_date": "2026-05-08",
+  "git_commit": "e99044309f0e8f1970b0c2efd7bfac63d112a828",
   "stock_pool": {
     "stock_pool_path": "ai_stock_pool.csv",
     "stock_pool_sha256": "a77947290af5a178019a5f597f0384f44b184e7c8663e0111fb0f5511ca3a09e",
@@ -11,54 +13,54 @@
     "stock_pool_columns": "stock_code|stock_name|sector|sub_sector|exchange|list_date|market_cap|ai_exposure|recommended_logic"
   },
   "primary_results": {
-    "merged_scores": "results/20260519_215413/ranking_backtest_scores.csv"
+    "merged_scores": "results/20260526_102948/ranking_backtest_scores.csv"
   },
   "folders": {
-    "results": "results/20260519_215413",
-    "llm_research": "audits/20260519_215413/llm_research",
-    "raw_outputs": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs",
-    "training_data": "results/20260519_215413/training_data",
-    "pipeline_reconcilliation": "audits/20260519_215413/pipeline_reconcilliation"
+    "results": "results/20260526_102948",
+    "llm_research": "audits/20260526_102948/llm_research",
+    "raw_outputs": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs",
+    "training_data": "results/20260526_102948/training_data",
+    "pipeline_reconcilliation": "audits/20260526_102948/pipeline_reconcilliation"
   },
   "artifacts": {
     "primary_results": {
-      "merged_scores": "results/20260519_215413/ranking_backtest_scores.csv"
+      "merged_scores": "results/20260526_102948/ranking_backtest_scores.csv"
     },
     "research": {
-      "ledger_dir": "audits/20260519_215413/llm_research",
-      "ledger": "audits/20260519_215413/llm_research/ledger.json",
-      "candidates": "audits/20260519_215413/llm_research/candidates.csv",
-      "sources": "audits/20260519_215413/llm_research/sources.csv",
-      "notes": "audits/20260519_215413/llm_research/notes.md"
+      "ledger_dir": "audits/20260526_102948/llm_research",
+      "ledger": "audits/20260526_102948/llm_research/ledger.json",
+      "candidates": "audits/20260526_102948/llm_research/candidates.csv",
+      "sources": "audits/20260526_102948/llm_research/sources.csv",
+      "notes": "audits/20260526_102948/llm_research/notes.md"
     },
     "backtest": {
-      "config": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_config.csv",
-      "summary": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_summary.csv",
-      "equity": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_equity.csv",
-      "rebalances": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_rebalances.csv",
-      "point_in_time": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_point_in_time.csv",
-      "factor_lineage": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_factor_lineage.csv",
-      "factor_lineage_notes": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_factor_lineage.md",
-      "factor_diagnostics": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/factor_diagnostics.csv",
-      "factor_diagnostics_summary": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/factor_diagnostics.md",
-      "portfolio_risk": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/portfolio_risk.csv",
-      "history_fetch_log": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_data_fetch_log.csv",
-      "exception_log": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_exceptions.json",
-      "run_metadata": "audits/20260519_215413/pipeline_reconcilliation/raw_outputs/backtest/backtest_run_metadata.json"
+      "config": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_config.csv",
+      "summary": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_summary.csv",
+      "equity": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_equity.csv",
+      "rebalances": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_rebalances.csv",
+      "point_in_time": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_point_in_time.csv",
+      "factor_lineage": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_factor_lineage.csv",
+      "factor_lineage_notes": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_factor_lineage.md",
+      "factor_diagnostics": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/factor_diagnostics.csv",
+      "factor_diagnostics_summary": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/factor_diagnostics.md",
+      "portfolio_risk": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/portfolio_risk.csv",
+      "history_fetch_log": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_data_fetch_log.csv",
+      "exception_log": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_exceptions.json",
+      "run_metadata": "audits/20260526_102948/pipeline_reconcilliation/raw_outputs/backtest/backtest_run_metadata.json"
     },
     "training": {
-      "stock_pool_snapshot": "results/20260519_215413/training_data/stock_pool_snapshot.csv",
-      "ranking_features": "results/20260519_215413/training_data/ranking_features.csv",
-      "allocation_labels": "results/20260519_215413/training_data/allocation_labels.csv",
-      "rebalance_labels": "results/20260519_215413/training_data/rebalance_labels.csv",
-      "equity_labels": "results/20260519_215413/training_data/equity_labels.csv",
-      "metadata": "results/20260519_215413/training_data/metadata.json"
+      "stock_pool_snapshot": "results/20260526_102948/training_data/stock_pool_snapshot.csv",
+      "ranking_features": "results/20260526_102948/training_data/ranking_features.csv",
+      "allocation_labels": "results/20260526_102948/training_data/allocation_labels.csv",
+      "rebalance_labels": "results/20260526_102948/training_data/rebalance_labels.csv",
+      "equity_labels": "results/20260526_102948/training_data/equity_labels.csv",
+      "metadata": "results/20260526_102948/training_data/metadata.json"
     },
     "reconciliation": {
-      "stock_reconciliation": "audits/20260519_215413/pipeline_reconcilliation/stock_reconciliation.csv",
-      "run_checks": "audits/20260519_215413/pipeline_reconcilliation/run_checks.csv",
-      "file_manifest": "audits/20260519_215413/pipeline_reconcilliation/file_manifest.csv",
-      "summary": "audits/20260519_215413/pipeline_reconcilliation/summary.json"
+      "stock_reconciliation": "audits/20260526_102948/pipeline_reconcilliation/stock_reconciliation.csv",
+      "run_checks": "audits/20260526_102948/pipeline_reconcilliation/run_checks.csv",
+      "file_manifest": "audits/20260526_102948/pipeline_reconcilliation/file_manifest.csv",
+      "summary": "audits/20260526_102948/pipeline_reconcilliation/summary.json"
     }
   }
 }

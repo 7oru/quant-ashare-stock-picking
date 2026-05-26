@@ -1,0 +1,3 @@
+as_of_date,dataset,source,available,fallback_used,rows,reason
+2026-05-26,historical_daily,baostock,True,False,56,
+2026-05-26,spot_fundamental,price_proxy,False,True,0,"ConnectionError(ProtocolError('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')))"
